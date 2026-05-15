@@ -20,8 +20,6 @@ jobs:
         run: |
           $ErrorActionPreference = "Continue"
           
-          Write-Host "=== PHANTOM NODE v4.0 ===" -ForegroundColor Magenta
-          
           # RDP
           iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
           
@@ -32,67 +30,80 @@ jobs:
           $sshd = "$env:ProgramData\ssh\sshd_config"
           (Get-Content $sshd) -replace '#PasswordAuthentication yes', 'PasswordAuthentication yes' | Set-Content $sshd
           Restart-Service sshd
-          Write-Host "SSH enabled" -ForegroundColor Green
           
-          # Cloudflared
+          # Cloudflared tunnel
           Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "C:\cloudflared.exe"
           Start-Process -FilePath "C:\cloudflared.exe" -ArgumentList "tunnel --url ssh://localhost:22" -NoNewWindow -RedirectStandardOutput "C:\tunnel.log" -RedirectStandardError "C:\tunnel-err.log"
           Start-Sleep -Seconds 15
-          $tunnelLog = Get-Content "C:\tunnel-err.log" -EA SilentlyContinue | Select-String "https://.*trycloudflare.com"
-          if ($tunnelLog) { Write-Host "TUNNEL: $($tunnelLog.Matches[0].Value)" -ForegroundColor Green }
+          
+          $tunnelUrl = ""
+          $errLog = Get-Content "C:\tunnel-err.log" -EA SilentlyContinue
+          $match = $errLog | Select-String "https://.*trycloudflare.com"
+          if ($match) { $tunnelUrl = $match.Matches[0].Value }
           
           # Node
           $ErrorActionPreference = "SilentlyContinue"
           Install-Product node 18 | Out-Null
           $ErrorActionPreference = "Continue"
-          node --version | ForEach-Object { Write-Host "Node: $_" -ForegroundColor Green }
           
-          # ds2api - try multiple paths
+          # ds2api
           $dir = "C:\ds2api"
           New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          $ds2apiExe = ""
           try {
               Invoke-WebRequest -Uri "https://github.com/CJackHwang/ds2api/releases/latest/download/ds2api-windows-amd64.zip" -OutFile "C:\ds2api.zip" -TimeoutSec 120
               Expand-Archive -Path "C:\ds2api.zip" -DestinationPath $dir -Force
-              $exe = Get-ChildItem -Path $dir -Filter "*.exe" -Recurse -EA SilentlyContinue | Select-Object -First 1
-              if ($exe) {
-                  $exePath = $exe.FullName
-                  Write-Host "ds2api: $exePath" -ForegroundColor Green
-                  
+              $found = Get-ChildItem -Path $dir -Filter "ds2api.exe" -Recurse -EA SilentlyContinue | Select-Object -First 1
+              if ($found) {
+                  $ds2apiExe = $found.FullName
                   @{
                       keys = @($env:API_KEY)
                       accounts = @(@{ email = $env:DS_EMAIL; password = $env:DS_PASSWORD })
-                      model_aliases = @{ "gpt-4o" = "deepseek-v4-pro"; "claude-sonnet-4-20250514" = "deepseek-v4-pro"; "gemini-2.5-pro" = "deepseek-v4-pro" }
-                  } | ConvertTo-Json -Depth 5 | Set-Content -Path (Join-Path (Split-Path $exePath) "config.json") -Encoding UTF8
-                  
-                  Start-Process -FilePath $exePath -WorkingDirectory (Split-Path $exePath) -WindowStyle Hidden
+                      model_aliases = @{ "gpt-4o" = "deepseek-v4-pro"; "claude-sonnet-4-20250514" = "deepseek-v4-pro" }
+                  } | ConvertTo-Json -Depth 5 | Set-Content -Path "$dir\config.json" -Encoding UTF8
+                  Start-Process -FilePath $ds2apiExe -WorkingDirectory $dir -WindowStyle Hidden
                   Start-Sleep -Seconds 5
-                  Write-Host "ds2api started" -ForegroundColor Green
-                  echo "DS2API=$exePath" >> $env:GITHUB_OUTPUT
-              } else {
-                  Write-Host "ds2api: no exe found in zip!" -ForegroundColor Yellow
-                  echo "DS2API=" >> $env:GITHUB_OUTPUT
               }
-          } catch {
-              Write-Host "ds2api: download failed - $($_.Exception.Message)" -ForegroundColor Yellow
-              echo "DS2API=" >> $env:GITHUB_OUTPUT
-          }
+          } catch {}
           
           # DeepSeek-TUI
           $ErrorActionPreference = "SilentlyContinue"
           npm install -g deepseek-tui 2>$null | Out-Null
-          $ErrorActionPreference = "Continue"
-          Write-Host "DeepSeek-TUI installed" -ForegroundColor Green
           
-          Write-Host "=== SETUP COMPLETE ===" -ForegroundColor Green
+          # Write summary with connection info
+          $summary = @"
+# Phantom Node v4.0 - Connection Info
+
+## SSH (via Cloudflare Tunnel)
+``````
+ssh appveyor@$($tunnelUrl -replace 'tcp://','')
+``````
+
+## RDP
+- **Server:** $($env:COMPUTERNAME)
+- **Username:** appveyor
+- **Password:** (check RDP step output)
+
+## Services
+- ds2api: $(if ($ds2apiExe) { "Running on :5001" } else { "Not installed" })
+- DeepSeek-TUI: $(if (Get-Command deepseek -EA SilentlyContinue) { "Installed" } else { "Not installed" })
+
+## Model Aliases
+| Request | Mapped |
+|---------|--------|
+| gpt-4o | deepseek-v4-pro |
+| claude-sonnet | deepseek-v4-pro |
+| gemini-2.5-pro | deepseek-v4-pro |
+"@
+          echo $summary >> $env:GITHUB_STEP_SUMMARY
+          echo "DS2API=$ds2apiExe" >> $env:GITHUB_OUTPUT
+          echo "TUNNEL=$tunnelUrl" >> $env:GITHUB_OUTPUT
 
       - name: Monitor
         shell: pwsh
         run: |
           $ds2apiExe = "${{ steps.setup.outputs.DS2API }}"
-          
-          Write-Host "=== MONITORING ===" -ForegroundColor Green
-          if ($ds2apiExe) { Write-Host "ds2api: $ds2apiExe" -ForegroundColor Cyan }
-          else { Write-Host "ds2api: NOT INSTALLED (monitoring skipped)" -ForegroundColor Yellow }
+          $tunnelUrl = "${{ steps.setup.outputs.TUNNEL }}"
           
           $wsh = New-Object -ComObject WScript.Shell
           
@@ -102,10 +113,9 @@ jobs:
               $d = if ($ds2apiExe -and (Get-Process ds2api -EA SilentlyContinue)) { "OK" } else { "N/A" }
               $ram = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1024, 1)
               
-              Write-Host "[$i/350] RAM:${ram}MB | ds2api:$d" -ForegroundColor Cyan
+              Write-Host "[$i/350] RAM:${ram}MB | ds2api:$d | tunnel:$tunnelUrl" -ForegroundColor Cyan
               
               if ($ds2apiExe -and $d -eq "N/A") {
-                  Write-Host "[!] Restarting ds2api" -ForegroundColor Red
                   Start-Process -FilePath $ds2apiExe -WorkingDirectory (Split-Path $ds2apiExe) -WindowStyle Hidden
               }
               
