@@ -14,69 +14,58 @@ jobs:
     timeout-minutes: 360
     
     steps:
-      - name: Enable RDP + SSH + Cloudflare Tunnel
+      - name: Setup + Monitor (6h)
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
+          $logFile = "$env:USERPROFILE\Desktop\phantom-node.log"
           
-          # Enable RDP
+          function Log($msg, $color = "White") {
+              $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+              $line = "[$ts] $msg"
+              Write-Host $line -ForegroundColor $color
+              Add-Content -Path $logFile -Value $line -ErrorAction SilentlyContinue
+          }
+          
+          Log "=== PHANTOM NODE v4.0 ===" Magenta
+          
+          # 1. RDP
+          Log "[1/6] Enable RDP..." Cyan
           iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
           
-          # Enable OpenSSH
+          # 2. SSH
+          Log "[2/6] Enable SSH..." Cyan
           Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 2>$null
           Start-Service sshd
           Set-Service -Name sshd -StartupType Automatic
-          
-          # Allow password auth
           $sshdConfig = "$env:ProgramData\ssh\sshd_config"
           (Get-Content $sshdConfig) -replace '#PasswordAuthentication yes', 'PasswordAuthentication yes' | Set-Content $sshdConfig
           Restart-Service sshd
           
-          # Install cloudflared
-          Write-Host "Installing cloudflared..." -ForegroundColor Cyan
+          # 3. Cloudflare tunnel
+          Log "[3/6] Cloudflared tunnel..." Cyan
           Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "C:\cloudflared.exe"
-          
-          # Start SSH tunnel
-          Write-Host "Starting SSH tunnel..." -ForegroundColor Cyan
           Start-Process -FilePath "C:\cloudflared.exe" -ArgumentList "tunnel --url ssh://localhost:22" -WindowStyle Hidden
           Start-Sleep -Seconds 15
           
-          # Get tunnel URL from log
-          $logDir = "$env:TEMP\cloudflared"
-          $logFile = Get-ChildItem -Path $logDir -Filter "*.log" -ErrorAction SilentlyContinue | Select-Object -First 1
-          
-          # Alternative: check cloudflared output
-          Write-Host "=== CHECK LOGS FOR TUNNEL URL ===" -ForegroundColor Green
-          Write-Host "Look for 'trycloudflare.com' URL in the output above" -ForegroundColor Yellow
-          
-          # Also print RDP info
-          $rdpPass = "26cMCG7JzBCtBZ1X9ZXiHQ85UuMt7wqK+5KTNEcBuu0="
-          Write-Host "=== RDP INFO ===" -ForegroundColor Green
-          Write-Host "Server: 172.214.47.53:3389" -ForegroundColor Yellow
-          Write-Host "Username: appveyor" -ForegroundColor Yellow
-          Write-Host "Password: $rdpPass" -ForegroundColor Yellow
-
-      - name: Install Tools
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Continue"
-          
-          Write-Host "=== INSTALLING TOOLS ===" -ForegroundColor Magenta
-          
-          # Node 18
-          Write-Host "[1/4] Node 18..." -ForegroundColor Cyan
+          # 4. Node 18
+          Log "[4/6] Node 18..." Cyan
           $ErrorActionPreference = "SilentlyContinue"
           Install-Product node 18 | Out-Null
           $ErrorActionPreference = "Continue"
-          node --version
+          node --version | ForEach-Object { Log "  Node: $_" Green }
           
-          # ds2api
-          Write-Host "[2/4] ds2api..." -ForegroundColor Yellow
-          $dir = "C:\ds2api"
-          New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          # 5. ds2api
+          Log "[5/6] ds2api..." Yellow
+          $ds2apiDir = "C:\ds2api"
+          New-Item -ItemType Directory -Path $ds2apiDir -Force | Out-Null
           Invoke-WebRequest -Uri "https://github.com/CJackHwang/ds2api/releases/latest/download/ds2api-windows-amd64.zip" -OutFile "C:\ds2api.zip"
-          Expand-Archive -Path "C:\ds2api.zip" -DestinationPath $dir -Force
-          $exe = (Get-ChildItem -Path $dir -Filter "ds2api.exe" -Recurse | Select-Object -First 1).FullName
+          Expand-Archive -Path "C:\ds2api.zip" -DestinationPath $ds2apiDir -Force
+          $ds2apiExe = (Get-ChildItem -Path $ds2apiDir -Filter "ds2api.exe" -Recurse | Select-Object -First 1).FullName
+          Log "  Path: $ds2apiExe" Green
+          
+          # Save paths for later
+          Set-Content -Path "C:\phantom-paths.txt" -Value "DS2API=$ds2apiExe`nDS2API_DIR=$ds2apiDir"
           
           @{
               keys = @($env:API_KEY)
@@ -87,41 +76,41 @@ jobs:
                   "claude-sonnet-4-20250514" = "deepseek-v4-pro"
                   "gemini-2.5-pro" = "deepseek-v4-pro"
               }
-          } | ConvertTo-Json -Depth 5 | Set-Content -Path "$dir\config.json" -Encoding UTF8
+          } | ConvertTo-Json -Depth 5 | Set-Content -Path "$ds2apiDir\config.json" -Encoding UTF8
           
-          Start-Process -FilePath $exe -WorkingDirectory $dir -WindowStyle Hidden
+          Start-Process -FilePath $ds2apiExe -WorkingDirectory $ds2apiDir -WindowStyle Hidden
           Start-Sleep -Seconds 5
-          Write-Host "ds2api running on :5001" -ForegroundColor Green
           
-          # DeepSeek-TUI
-          Write-Host "[3/4] DeepSeek-TUI..." -ForegroundColor Cyan
+          # 6. DeepSeek-TUI
+          Log "[6/6] DeepSeek-TUI..." Cyan
           $ErrorActionPreference = "SilentlyContinue"
           npm install -g deepseek-tui 2>$null | Out-Null
           $ErrorActionPreference = "Continue"
           
-          # 9router
-          Write-Host "[4/4] 9router..." -ForegroundColor Yellow
-          npm install -g 9router 2>$null | Out-Null
+          Log "=== ALL SERVICES RUNNING ===" Green
+          Log "SSH tunnel via cloudflared" Cyan
+          Log "ds2api on :5001 | deepseek ready" Cyan
           
-          Write-Host "=== ALL DONE ===" -ForegroundColor Green
-
-      - name: Keep Alive
-        shell: pwsh
-        run: |
-          Write-Host "=== MONITORING 6 HOURS ===" -ForegroundColor Green
+          # === MONITORING LOOP ===
+          Log "=== STARTING 6H MONITORING ===" Green
+          
+          $ds2apiPath = $ds2apiExe
+          $wsh = New-Object -ComObject WScript.Shell
           
           for ($i = 1; $i -le 360; $i++) {
-              $wsh = New-Object -ComObject WScript.Shell
               $wsh.SendKeys('{F15}')
               
               $d = if (Get-Process ds2api -EA SilentlyContinue) { "OK" } else { "DOWN" }
               $ram = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1024, 1)
               
-              Write-Host "[$i/360] RAM:${ram}MB | ds2api:$d" -ForegroundColor Cyan
+              Log "[$i/360] RAM:${ram}MB | ds2api:$d" Cyan
               
               if ($d -eq "DOWN") {
-                  Start-Process "C:\ds2api\ds2api.exe" -WorkingDirectory "C:\ds2api" -WindowStyle Hidden
+                  Log "[!] Restarting ds2api" Red
+                  Start-Process -FilePath $ds2apiPath -WorkingDirectory $ds2apiDir -WindowStyle Hidden
               }
               
               Start-Sleep -Seconds 60
           }
+          
+          Log "=== SESSION END ===" DarkRed
