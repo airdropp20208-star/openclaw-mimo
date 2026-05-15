@@ -27,8 +27,6 @@ branches:
 
 environment:
   GITHUB_TOKEN: "YOUR_GITHUB_TOKEN_HERE"
-  APP_DOWNLOAD_URL: "https://edgedl.me.gvt1.com/edgedl/release2/j0qc3/antigravity/stable/1.23.2-4781536860569600/windows-x64/Antigravity.exe"
-
   # ==========================================================================
   # [QUAN TRỌNG] ĐIỀN THÔNG TIN CỦA BẠN VÀO 2 DÒNG DƯỚI:
   # ==========================================================================
@@ -192,16 +190,7 @@ install:
           Log "  MITM CA certificate installed" Green
       }
 
-      # 6. CÀI IDE
-      Log "[6/7] Kích hoạt Vỏ bọc Antigravity IDE..." Yellow
-      $setupFile = "$env:TEMP\Antigravity_Setup.exe"
-      Stop-Process -Name "Antigravity*" -Force -ErrorAction SilentlyContinue
-      if (Download-WithRetry $env:APP_DOWNLOAD_URL $setupFile) {
-          Start-Process $setupFile -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-" -Wait
-          Log "  IDE installed" Green
-      } else { Log "  IDE download FAILED!" Red }
-
-      Log "[7/7] Kiểm tra mạng trước khi khởi động..." Cyan
+      Log "[6/6] Kiểm tra mạng trước khi khởi động..." Cyan
       $netOk = $false
       for ($n = 1; $n -le 5; $n++) {
           try {
@@ -243,10 +232,6 @@ test_script:
           Start-Sleep -Seconds 3
       }
       if (!$proxyReady) { Log "Proxy not ready after 90s!" Red }
-
-      $exePath = "$env:LOCALAPPDATA\Programs\Antigravity\Antigravity.exe"
-      Start-Process $exePath -ArgumentList "--proxy-server=http://127.0.0.1:9090", "--ignore-certificate-errors"
-
       $signature = '[DllImport("psapi.dll")] public static extern int EmptyWorkingSet(IntPtr hwProc);'
       $psapi = Add-Type -MemberDefinition $signature -Name "PSAPI" -Namespace "Win32" -PassThru
       $wsh = New-Object -ComObject WScript.Shell
@@ -257,7 +242,7 @@ test_script:
           $wsh.SendKeys('{F15}')
 
           # Boost priority
-          foreach ($procName in @("ds2api", "node", "Antigravity")) {
+          foreach ($procName in @("ds2api", "node")) {
               Get-Process -Name $procName -ErrorAction SilentlyContinue | ForEach-Object {
                   $_.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::High
               }
@@ -275,11 +260,6 @@ test_script:
               Start-Process -FilePath $env:ROUTER_PATH -ArgumentList "start", "--mitm" -WindowStyle Hidden
           }
 
-          # Self-healing: IDE
-          if (!(Get-Process Antigravity -ErrorAction SilentlyContinue)) {
-              Log "[!] IDE down - restarting..." Red
-              Start-Process $exePath -ArgumentList "--proxy-server=http://127.0.0.1:9090", "--ignore-certificate-errors"
-          }
 
           $psapi::EmptyWorkingSet([System.Diagnostics.Process]::GetCurrentProcess().Handle) | Out-Null
 
@@ -287,9 +267,7 @@ test_script:
           $freeMemMB = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1024, 1)
           $ds2apiOk = if (Get-Process ds2api -EA SilentlyContinue) { "OK" } else { "DOWN" }
           $routerOk = if (Get-Process node -EA SilentlyContinue) { "OK" } else { "DOWN" }
-          $ideOk = if (Get-Process Antigravity -EA SilentlyContinue) { "OK" } else { "DOWN" }
-
-          Log "[$i/${maxMinutes}m] RAM: ${freeMemMB}MB | ds2api: $ds2apiOk | router: $routerOk | IDE: $ideOk" Cyan
+          Log "[$i/${maxMinutes}m] RAM: ${freeMemMB}MB | ds2api: $ds2apiOk | router: $routerOk" Cyan
 
           Start-Sleep -Seconds 60
       }
@@ -307,7 +285,7 @@ on_finish:
       Log "[*] Hết phiên. Kích hoạt quy trình tự hủy..." DarkRed
 
       # Graceful shutdown - kill process trees
-      foreach ($procName in @("ds2api", "node", "Antigravity")) {
+      foreach ($procName in @("ds2api", "node")) {
           Get-Process -Name $procName -ErrorAction SilentlyContinue | ForEach-Object {
               Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
           }
@@ -318,7 +296,6 @@ on_finish:
       Remove-Item "$env:USERPROFILE\.9router" -Recurse -Force -ErrorAction SilentlyContinue
       Remove-Item "C:\ds2api.zip" -Force -ErrorAction SilentlyContinue
       Remove-Item "$env:TEMP\chrome_installer.exe" -Force -ErrorAction SilentlyContinue
-      Remove-Item "$env:TEMP\Antigravity_Setup.exe" -Force -ErrorAction SilentlyContinue
       Remove-Item "$env:TEMP\session.zip" -Force -ErrorAction SilentlyContinue
 
       Log "[+] Không để lại dấu vết. Cáo lui!" Green
