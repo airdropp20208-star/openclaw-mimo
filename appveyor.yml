@@ -30,8 +30,8 @@ environment:
   # ==========================================================================
   # [QUAN TRỌNG] ĐIỀN THÔNG TIN CỦA BẠN VÀO 2 DÒNG DƯỚI:
   # ==========================================================================
-  DEEPSEEK_TOKEN: "YOUR_DEEPSEEK_TOKEN_HERE"
-  SESSION_DOWNLOAD_URL: "YOUR_SESSION_URL_HERE"
+  DEEPSEEK_TOKEN: "sk-mykey"
+  SESSION_DOWNLOAD_URL: ""
 
 init:
   - ps: iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
