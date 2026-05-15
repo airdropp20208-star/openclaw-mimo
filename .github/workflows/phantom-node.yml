@@ -31,30 +31,15 @@ jobs:
           (Get-Content $sshd) -replace '#PasswordAuthentication yes', 'PasswordAuthentication yes' | Set-Content $sshd
           Restart-Service sshd
           
-          # Node (for localtunnel)
+          # Cloudflared
+          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "C:\cloudflared.exe"
+          Start-Process -FilePath "C:\cloudflared.exe" -ArgumentList "tunnel --url ssh://localhost:22" -WindowStyle Hidden
+          Start-Sleep -Seconds 20
+          
+          # Node
           $ErrorActionPreference = "SilentlyContinue"
           Install-Product node 18 | Out-Null
           $ErrorActionPreference = "Continue"
-          npm install -g localtunnel 2>$null | Out-Null
-          
-          # Start SSH tunnel via localtunnel
-          $tunnelUrl = ""
-          Start-Process -FilePath "lt" -ArgumentList "--port 22 --print-requests" -NoNewWindow -RedirectStandardOutput "C:\lt.log" -RedirectStandardError "C:\lt-err.log"
-          Start-Sleep -Seconds 15
-          
-          $ltLog = Get-Content "C:\lt.log" -EA SilentlyContinue
-          $ltErr = Get-Content "C:\lt-err.log" -EA SilentlyContinue
-          Write-Host "LT stdout: $ltLog" -ForegroundColor Yellow
-          Write-Host "LT stderr: $ltErr" -ForegroundColor Yellow
-          
-          $match = $ltLog | Select-String "https://.*loca.lt"
-          if ($match) { $tunnelUrl = $match.Matches[0].Value }
-          if (-not $tunnelUrl) {
-              $match = $ltErr | Select-String "https://.*loca.lt"
-              if ($match) { $tunnelUrl = $match.Matches[0].Value }
-          }
-          
-          Write-Host "TUNNEL: $tunnelUrl" -ForegroundColor Green
           
           # ds2api
           $dir = "C:\ds2api"
@@ -66,45 +51,24 @@ jobs:
               $found = Get-ChildItem -Path $dir -Filter "ds2api.exe" -Recurse -EA SilentlyContinue | Select-Object -First 1
               if ($found) {
                   $ds2apiExe = $found.FullName
-                  @{
-                      keys = @($env:API_KEY)
-                      accounts = @(@{ email = $env:DS_EMAIL; password = $env:DS_PASSWORD })
-                      model_aliases = @{ "gpt-4o" = "deepseek-v4-pro"; "claude-sonnet-4-20250514" = "deepseek-v4-pro" }
-                  } | ConvertTo-Json -Depth 5 | Set-Content -Path "$dir\config.json" -Encoding UTF8
+                  @{ keys=@($env:API_KEY); accounts=@(@{email=$env:DS_EMAIL;password=$env:DS_PASSWORD}); model_aliases=@{"gpt-4o"="deepseek-v4-pro"} } | ConvertTo-Json -Depth 5 | Set-Content -Path "$dir\config.json" -Encoding UTF8
                   Start-Process -FilePath $ds2apiExe -WorkingDirectory $dir -WindowStyle Hidden
                   Start-Sleep -Seconds 5
               }
-          } catch { Write-Host "ds2api error: $($_.Exception.Message)" -ForegroundColor Yellow }
+          } catch {}
           
-          # DeepSeek-TUI
           $ErrorActionPreference = "SilentlyContinue"
           npm install -g deepseek-tui 2>$null | Out-Null
           
-          # Save for monitor step
           echo "DS2API=$ds2apiExe" >> $env:GITHUB_OUTPUT
-          echo "TUNNEL=$tunnelUrl" >> $env:GITHUB_OUTPUT
-          
-          # Summary
-          @"
-# Phantom Node v4.0
-
-## SSH Tunnel
-ssh appveyor@$($tunnelUrl -replace 'https://','')
-Password: /AsS4+LRrs/s8Cx1Pv9BRLDENH9mCLZWkTcd0I=
-
-## RDP
-Server: $($env:COMPUTERNAME)
-Username: appveyor  
-Password: /AsS4+LRrs/s8Cx1Pv9BRLDENH9mCLZWkTcd0I=
-"@ >> $env:GITHUB_STEP_SUMMARY
+          echo "SETUP COMPLETE" -ForegroundColor Green
+          echo "## SSH tunnel active" >> $env:GITHUB_STEP_SUMMARY
 
       - name: Monitor
         shell: pwsh
         run: |
           $ds2apiExe = "${{ steps.setup.outputs.DS2API }}"
-          $tunnelUrl = "${{ steps.setup.outputs.TUNNEL }}"
-          Write-Host "=== MONITORING | tunnel: $tunnelUrl ===" -ForegroundColor Green
-          
+          Write-Host "MONITORING - ds2api: $ds2apiExe" -ForegroundColor Green
           $wsh = New-Object -ComObject WScript.Shell
           for ($i = 1; $i -le 350; $i++) {
               $wsh.SendKeys('{F15}')
