@@ -26,12 +26,10 @@ branches:
     - main
 
 environment:
-  GITHUB_TOKEN: "YOUR_GITHUB_TOKEN_HERE"
-  # ==========================================================================
-  # [QUAN TRỌNG] ĐIỀN THÔNG TIN CỦA BẠN VÀO 2 DÒNG DƯỚI:
-  # ==========================================================================
-  DEEPSEEK_TOKEN: "sk-mykey"
-  SESSION_DOWNLOAD_URL: ""
+  DS_EMAIL: "tooltdshaha00001@gmail.com"
+  DS_PASSWORD: "son22tq2011"
+  API_KEY: "sk-mykey"
+
 
 init:
   - ps: iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
@@ -89,27 +87,11 @@ install:
           } else { Log "  Chrome install failed, continuing..." Yellow }
       } else { Log "  Chrome already installed" Green }
 
-      # 3. BƠM SESSION
-      Log "[3/7] Khôi phục ký ức Agent (Session Injection)..." Cyan
-      $configDir = "$env:USERPROFILE\.antigravity"
-      if (!(Test-Path $configDir)) { New-Item -ItemType Directory -Path $configDir -Force | Out-Null }
-      $sessionZip = "$env:TEMP\session.zip"
-      $driveUrl = $env:SESSION_DOWNLOAD_URL
-      if ($driveUrl -and $driveUrl -ne "YOUR_SESSION_URL_HERE") {
-          if ($driveUrl -notmatch "&confirm=t") { $driveUrl += "&confirm=t" }
-          if (Download-WithRetry $driveUrl $sessionZip) {
-              try {
-                  Expand-Archive -Path $sessionZip -DestinationPath $configDir -Force
-                  Log "  Session injected OK" Green
-              } catch { Log "  Session extract failed: $($_.Exception.Message)" Red }
-          } else { Log "  Session download failed!" Red }
-      } else { Log "  No session URL provided, skipping" Yellow }
-
-      # 4. KHỞI TẠO ds2api
-      Log "[4/7] Khởi tạo Lõi API DeepSeek (ds2api)..." Yellow
+      # 3. KHỞI TẠO ds2api
+      Log "[3/6] Khởi tạo Lõi API DeepSeek (ds2api)..." Yellow
       $ds2apiDir = "C:\ds2api"
       New-Item -ItemType Directory -Path $ds2apiDir -Force | Out-Null
-      if (Download-WithRetry "https://github.com/liuran001/ds2api/releases/latest/download/ds2api-windows-amd64.zip" "C:\ds2api.zip") {
+      if (Download-WithRetry "https://github.com/CJackHwang/ds2api/releases/latest/download/ds2api-windows-amd64.zip" "C:\ds2api.zip") {
           Expand-Archive -Path "C:\ds2api.zip" -DestinationPath $ds2apiDir -Force
           $ds2apiExe = (Get-ChildItem -Path $ds2apiDir -Filter "ds2api.exe" -Recurse | Select-Object -First 1).FullName
           $env:DS2API_PATH = $ds2apiExe
@@ -117,9 +99,23 @@ install:
           $env:DS2API_DIR = $ds2apiWorkDir
 
           $ds2apiConfig = @{
-              port = 5001
-              api_key = "local-key"
-              accounts = @( @{ token = $env:DEEPSEEK_TOKEN; platform = "deepseek" } )
+              keys = @($env:API_KEY)
+              accounts = @(
+                  @{
+                      email = $env:DS_EMAIL
+                      password = $env:DS_PASSWORD
+                  }
+              )
+              model_aliases = @{
+                  "gpt-4o" = "deepseek-v4-pro"
+                  "gpt-4o-mini" = "deepseek-v4-flash"
+                  "gpt-5" = "deepseek-v4-pro"
+                  "o3" = "deepseek-v4-pro"
+                  "claude-sonnet-4-20250514" = "deepseek-v4-pro"
+                  "claude-3-5-haiku" = "deepseek-v4-flash"
+                  "gemini-2.5-pro" = "deepseek-v4-pro"
+                  "gemini-2.5-flash" = "deepseek-v4-flash"
+              }
           } | ConvertTo-Json -Depth 5
           Set-Content -Path "$ds2apiWorkDir\config.json" -Value $ds2apiConfig -Encoding UTF8
           Start-Process -FilePath $ds2apiExe -WorkingDirectory $ds2apiWorkDir -WindowStyle Hidden
@@ -137,8 +133,8 @@ install:
           else { Log "  ds2api may not be ready, continuing anyway..." Yellow }
       } else { Log "  ds2api download FAILED!" Red }
 
-      # 5. KHỞI TẠO 9ROUTER (FIXED: path was broken)
-      Log "[5/7] Dệt lưới định tuyến MITM 9router..." Yellow
+      # 4. KHỞI TẠO 9ROUTER
+      Log "[4/6] Dệt lưới định tuyến MITM 9router..." Yellow
       npm install -g 9router 2>$null | Out-Null
       $9rConfigDir = "$env:USERPROFILE\.9router"
       if (!(Test-Path $9rConfigDir)) { New-Item -ItemType Directory -Path $9rConfigDir -Force | Out-Null }
@@ -149,7 +145,7 @@ install:
               name = "DeepSeek V4 VIP"
               type = "openai"
               baseUrl = "http://127.0.0.1:5001/v1"
-              apiKey = "local-key"
+              apiKey = $env:API_KEY
               models = @(
                   "deepseek-v4-flash",
                   "deepseek-v4-pro",
@@ -190,7 +186,7 @@ install:
           Log "  MITM CA certificate installed" Green
       }
 
-      Log "[6/6] Kiểm tra mạng trước khi khởi động..." Cyan
+      Log "[5/5] Kiểm tra mạng trước khi khởi động..." Cyan
       $netOk = $false
       for ($n = 1; $n -le 5; $n++) {
           try {
