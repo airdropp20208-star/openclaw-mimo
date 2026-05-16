@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       api_key:
-        description: 'API Key (optional)'
+        description: 'Mimo API Key'
         required: false
         default: ''
 
@@ -14,26 +14,21 @@ permissions:
 jobs:
   setup:
     runs-on: windows-latest
-    timeout-minutes: 360
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
 
-      - name: Init
+      - name: Setup
         shell: pwsh
         run: |
-          Start-Sleep -Seconds (Get-Random -Minimum 30 -Maximum 90)
+          # Set PATH for all steps
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+          $env:PATH = "C:\Python311;C:\Python311\Scripts;C:\nodejs;C:\nodejs\node_modules\.bin;" + $env:PATH
 
-      - name: Network
-        shell: pwsh
-        run: |
-          Start-Sleep -Seconds (Get-Random -Minimum 15 -Maximum 45)
-
-          # RDP
+          # Enable RDP
           iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
 
-          Start-Sleep -Seconds (Get-Random -Minimum 10 -Maximum 25)
-
-          # SSH
+          # Enable SSH
           Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 2>$null
           Start-Service sshd
           Set-Service sshd -StartupType Automatic
@@ -42,7 +37,6 @@ jobs:
           Restart-Service sshd
 
           # Cloudflare tunnel
-          Start-Sleep -Seconds (Get-Random -Minimum 5 -Maximum 15)
           Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "C:\cf.exe"
           Start-Process "C:\cf.exe" "tunnel --url ssh://localhost:22" -NoNewWindow -RedirectStandardError "C:\cf.log"
           Start-Sleep 25
@@ -56,223 +50,152 @@ jobs:
           git config user.email "dev@workspace"
           git config user.name "Developer"
           git add CONNECTION.md
-          git commit -m "chore: update connection" -m "[skip ci]"
+          git commit -m "chore: connection" -m "[skip ci]"
           git push
 
-      - name: Python
-        shell: pwsh
-        run: |
-          Start-Sleep -Seconds (Get-Random -Minimum 20 -Maximum 50)
-
+          # Install Python
+          Write-Host "Installing Python..." -ForegroundColor Yellow
           if (!(Test-Path "C:\Python311\python.exe")) {
               $pyUrl = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe"
               Invoke-WebRequest -Uri $pyUrl -OutFile "C:\python-installer.exe"
               Start-Process "C:\python-installer.exe" -ArgumentList "/quiet", "InstallAllUsers=1", "PrependPath=1", "Include_pip=1" -Wait
               Remove-Item "C:\python-installer.exe" -Force
           }
-
-          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-          $env:PATH = "C:\Python311;C:\Python311\Scripts;" + $env:PATH
-
           python --version
-          pip install --upgrade pip 2>&1 | Out-Null
 
-      - name: Node.js
-        shell: pwsh
-        run: |
-          Start-Sleep -Seconds (Get-Random -Minimum 10 -Maximum 30)
-
-          if (!(Test-Path "C:\Program Files\nodejs\node.exe")) {
+          # Install Node.js
+          Write-Host "Installing Node.js..." -ForegroundColor Yellow
+          if (!(Test-Path "C:\nodejs\node.exe")) {
               $nodeUrl = "https://nodejs.org/dist/v20.11.1/node-v20.11.1-x64.msi"
               Invoke-WebRequest -Uri $nodeUrl -OutFile "C:\node-installer.msi"
               Start-Process "msiexec.exe" -ArgumentList "/i", "C:\node-installer.msi", "/quiet", "INSTALLDIR=C:\nodejs" -Wait
               Remove-Item "C:\node-installer.msi" -Force
           }
-
-          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-          $env:PATH = "C:\nodejs;C:\nodejs\node_modules\.bin;" + $env:PATH
-
           node --version
-          npm --version
 
-      - name: Git
-        shell: pwsh
-        run: |
-          Start-Sleep -Seconds (Get-Random -Minimum 5 -Maximum 15)
-
+          # Install Git
+          Write-Host "Installing Git..." -ForegroundColor Yellow
           if (!(Test-Path "C:\Program Files\Git\cmd\git.exe")) {
               $gitUrl = "https://github.com/git-for-windows/git/releases/download/v2.44.0.windows.1/Git-2.44.0-64-bit.exe"
               Invoke-WebRequest -Uri $gitUrl -OutFile "C:\git-installer.exe"
               Start-Process "C:\git-installer.exe" -ArgumentList "/VERYSILENT", "/NORESTART" -Wait
               Remove-Item "C:\git-installer.exe" -Force
           }
-
-          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-
           git --version
 
-      - name: Tools
-        shell: pwsh
-        run: |
-          Start-Sleep -Seconds (Get-Random -Minimum 10 -Maximum 25)
-
-          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-          $env:PATH = "C:\Python311;C:\Python311\Scripts;C:\nodejs;C:\nodejs\node_modules\.bin;" + $env:PATH
-
-          # Common tools
+          # Install tools
+          Write-Host "Installing tools..." -ForegroundColor Yellow
+          pip install --upgrade pip 2>&1 | Out-Null
+          pip install hermes-agent flask django fastapi uvicorn requests httpx pandas numpy pyyaml rich click pytest 2>&1 | Out-Null
           npm install -g yarn pnpm typescript ts-node nodemon pm2 2>&1 | Out-Null
 
-          # Python packages
-          pip install flask django fastapi uvicorn requests httpx pandas numpy pyyaml rich click pytest black ruff mypy 2>&1 | Out-Null
-
-          # Verify
-          Write-Host "Python: $(python --version)" -ForegroundColor Green
-          Write-Host "Node: $(node --version)" -ForegroundColor Green
-          Write-Host "npm: $(npm --version)" -ForegroundColor Green
-          Write-Host "Git: $(git --version)" -ForegroundColor Green
-
-      - name: Hermes
-        shell: pwsh
-        run: |
-          Start-Sleep -Seconds (Get-Random -Minimum 15 -Maximum 35)
-
-          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-          $env:PATH = "C:\Python311;C:\Python311\Scripts;C:\nodejs;C:\nodejs\node_modules\.bin;" + $env:PATH
-
-          pip install hermes-agent 2>&1 | Out-Null
           hermes --version
+          Write-Host "All tools installed" -ForegroundColor Green
 
-      - name: Config
+      - name: Configure
         shell: pwsh
         env:
           API_KEY: ${{ github.event.inputs.api_key }}
         run: |
-          Start-Sleep -Seconds (Get-Random -Minimum 10 -Maximum 25)
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+          $env:PATH = "C:\Python311;C:\Python311\Scripts;C:\nodejs;C:\nodejs\node_modules\.bin;" + $env:PATH
 
-          $home = "$env:USERPROFILE\.hermes"
-          New-Item -ItemType Directory -Force -Path $home | Out-Null
+          $hermesDir = "$env:USERPROFILE\.hermes"
+          New-Item -ItemType Directory -Force -Path $hermesDir | Out-Null
 
-          @'
-          model:
-            default: mimo-v2.5
-            provider: xiaomi
-            base_url: https://api.xiaomimimo.com/v1
-          providers: {}
-          fallback_providers: []
-          credential_pool_strategies:
-            xiaomi: fill_first
-          toolsets:
-          - hermes-cli
-          agent:
-            max_turns: 90
-            gateway_timeout: 1800
-            restart_drain_timeout: 180
-            api_max_retries: 3
-            service_tier: ''
-            tool_use_enforcement: auto
-            gateway_timeout_warning: 900
-            clarify_timeout: 600
-            gateway_notify_interval: 180
-            gateway_auto_continue_freshness: 3600
-            image_input_mode: auto
-            disabled_toolsets: []
-          terminal:
-            backend: local
-            modal_mode: auto
-            cwd: .
-            timeout: 300
-            env_passthrough: []
-            shell_init_files: []
-            auto_source_bashrc: true
-            persistent_shell: true
-          display:
-            compact: false
-            personality: kawaii
-            language: en
-            streaming: false
-            timestamps: false
-          privacy:
-            redact_pii: false
-          security:
-            allow_private_urls: true
-            redact_secrets: true
-            allow_lazy_installs: true
-          cron:
-            wrap_response: true
-          memory:
-            memory_enabled: true
-            user_profile_enabled: true
-            memory_char_limit: 2200
-            user_char_limit: 1375
-            provider: ''
-          context:
-            engine: compressor
-          compression:
-            enabled: true
-            threshold: 0.5
-            target_ratio: 0.2
-            protect_last_n: 20
-            hygiene_hard_message_limit: 400
-          platform_toolsets:
-            cli:
-            - browser
-            - clarify
-            - code_execution
-            - cronjob
-            - delegation
-            - file
-            - image_gen
-            - memory
-            - session_search
-            - skills
-            - terminal
-            - todo
-            - tts
-            - vision
-            - web
-          telegram:
-            bot_token: 8965017390:AAF0nDHAnADjyiTTfhbmPWi2wCdbV7YFxtQ
-            allowed_chats: '7563947218'
-            reactions: false
-            channel_prompts: {}
-          _config_version: 23
-          '@ | Out-File -FilePath "$home\config.yaml" -Encoding utf8 -Force
+          # Write config
+          $config = @"
+model:
+  default: mimo-v2.5
+  provider: xiaomi
+  base_url: https://api.xiaomimimo.com/v1
+providers: {}
+fallback_providers: []
+credential_pool_strategies:
+  xiaomi: fill_first
+toolsets:
+- hermes-cli
+agent:
+  max_turns: 90
+  gateway_timeout: 1800
+  api_max_retries: 3
+  tool_use_enforcement: auto
+  disabled_toolsets: []
+terminal:
+  backend: local
+  timeout: 300
+  persistent_shell: true
+display:
+  personality: kawaii
+  language: en
+security:
+  allow_private_urls: true
+  redact_secrets: true
+  allow_lazy_installs: true
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+context:
+  engine: compressor
+compression:
+  enabled: true
+telegram:
+  bot_token: 8965017390:AAF0nDHAnADjyiTTfhbmPWi2wCdbV7YFxtQ
+  allowed_chats: '7563947218'
+  reactions: false
+  channel_prompts: {}
+platform_toolsets:
+  cli:
+  - browser
+  - clarify
+  - code_execution
+  - cronjob
+  - delegation
+  - file
+  - image_gen
+  - memory
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - tts
+  - vision
+  - web
+_config_version: 23
+"@
+          $config | Out-File -FilePath "$hermesDir\config.yaml" -Encoding utf8 -Force
 
+          # Write API key
           if ($env:API_KEY -ne "") {
-              "XIAOMI_API_KEY=$($env:API_KEY)" | Out-File -FilePath "$home\.env" -Encoding utf8 -Force
-              [System.Environment]::SetEnvironmentVariable("XIAOMI_API_KEY", $env:API_KEY, "User")
+              "XIAOMI_API_KEY=$($env:API_KEY)" | Out-File -FilePath "$hermesDir\.env" -Encoding utf8 -Force
           } else {
-              "# Set your API key here`nXIAOMI_API_KEY=YOUR_KEY_HERE" | Out-File -FilePath "$home\.env" -Encoding utf8 -Force
+              "XIAOMI_API_KEY=YOUR_KEY_HERE" | Out-File -FilePath "$hermesDir\.env" -Encoding utf8 -Force
           }
 
-          # Startup script - run gateway for Telegram
+          # Startup scripts
           @'
-          @echo off
-          title Phantom Node
-          echo Starting Hermes Gateway...
-          echo.
-          hermes gateway
-          pause
-          '@ | Out-File -FilePath "C:\start.bat" -Encoding ascii -Force
+@echo off
+title Phantom Node
+echo Starting Hermes Gateway...
+hermes gateway
+pause
+'@ | Out-File -FilePath "C:\start.bat" -Encoding ascii -Force
 
-          # Also create CLI mode script
           @'
-          @echo off
-          title Phantom Node - CLI
-          echo Starting Hermes CLI...
-          echo.
-          hermes
-          pause
-          '@ | Out-File -FilePath "C:\cli.bat" -Encoding ascii -Force
+@echo off
+title Phantom Node - CLI
+hermes
+pause
+'@ | Out-File -FilePath "C:\cli.bat" -Encoding ascii -Force
 
-          Write-Host "Ready" -ForegroundColor Green
+          Write-Host "Config done" -ForegroundColor Green
 
       - name: Keep Alive
         shell: pwsh
         run: |
-          for ($i=1;$i -le 350;$i++) {
+          for ($i=1;$i -le 320;$i++) {
               (New-Object -ComObject WScript.Shell).SendKeys('{F15}')
               $ram=[math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory/1024,1)
-              Write-Host "[$i/350] RAM:${ram}MB" -ForegroundColor Cyan
-              Start-Sleep -Seconds (Get-Random -Minimum 55 -Maximum 66)
+              Write-Host "[$i/320] RAM:${ram}MB" -ForegroundColor Cyan
+              Start-Sleep 60
           }
