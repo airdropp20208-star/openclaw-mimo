@@ -2,7 +2,7 @@
 
 ## SSH
 ```bash
-ssh appveyor@fitted-prospective-ice-defeat.trycloudflare.com
+ssh appveyor@comp-aware-pale-kent.trycloudflare.com
 ```
 
 ## RDP
