@@ -1,27 +1,23 @@
 # Phantom Node
 
-> Free AI environment via GitHub Actions + Telegram control
+> Free AI environment: Claude Code + DeepSeek via GitHub Actions
 
 ## What is this?
 
-A free Windows/Ubuntu VPS powered by GitHub Actions with:
-- **Hermes Agent** - AI assistant with tools
-- **Xiaomi Mimo 2.5** - Free AI model
-- **Telegram Bot** - Control from your phone
+A free AI coding environment powered by GitHub Actions:
+
+```
+Claude Code → 9router → ds2api → DeepSeek (FREE!)
+```
+
+- **Claude Code** - AI coding assistant
+- **DeepSeek** - Free AI model (V4 Flash/Pro)
+- **9router** - Smart AI router with token savings
+- **ds2api** - DeepSeek to API converter
+- **Hermes Agent** - Telegram bot control
 - **SSH Access** - Via Cloudflare tunnel
 
-## How it works
-
-```
-GitHub Actions Runner (Ubuntu)
-├── Python 3.11 + Node.js 20
-├── Hermes Agent + Gateway
-├── Xiaomi Mimo 2.5 API
-├── Telegram Bot Connection
-└── Cloudflare Tunnel (SSH)
-```
-
-## Setup (2 minutes)
+## Quick Start (3 minutes)
 
 ### 1. Fork this repo
 
@@ -32,13 +28,16 @@ Go to **Settings → Secrets and variables → Actions**:
 | Secret | Description | Required |
 |--------|-------------|----------|
 | `BOT_TOKEN` | Telegram bot token from @BotFather | Yes |
-| `XIAOMI_API_KEY` | Your Mimo API key | Yes |
+| `XIAOMI_API_KEY` | Your Mimo API key | Optional |
 
 ### 3. Run Workflow
 
 Go to **Actions → Deploy → Run workflow**
 
-Optionally provide an `api_key` to override the secret.
+Optional inputs:
+- `api_key` - Override Mimo API key
+- `deepseek_email` - DeepSeek account email
+- `deepseek_password` - DeepSeek account password
 
 ### 4. Connect
 
@@ -48,48 +47,83 @@ ssh runner@<tunnel-url>
 Password: phantom123
 ```
 
+**Use Claude Code:**
+```bash
+# SSH into the runner
+ssh runner@<tunnel-url>
+
+# Use Claude Code (routed through DeepSeek)
+claude "write a Python script to scrape websites"
+```
+
 **Telegram Bot:**
 Just message your bot on Telegram!
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│           GitHub Actions Runner             │
-│  ┌─────────────────────────────────────┐    │
-│  │        Hermes Agent Gateway         │    │
-│  │  ┌──────────┐  ┌────────────────┐  │    │
-│  │  │ Telegram │  │   CLI Tools    │  │    │
-│  │  │   Bot    │  │  (terminal,    │  │    │
-│  │  └──────────┘  │   file, web)   │  │    │
-│  │                 └────────────────┘  │    │
-│  └─────────────────────────────────────┘    │
-│  ┌─────────────────────────────────────┐    │
-│  │        Cloudflare Tunnel           │    │
-│  │        (SSH Access)                │    │
-│  └─────────────────────────────────────┘    │
-└─────────────────────────────────────────────┘
-           │
-           ▼
-    ┌──────────────┐
-    │   Your Phone │
-    │  (Telegram)  │
-    └──────────────┘
+┌─────────────────────────────────────────────────┐
+│           GitHub Actions Runner (Ubuntu)         │
+│                                                  │
+│  ┌──────────────────────────────────────────┐   │
+│  │         Claude Code CLI                  │   │
+│  │    (AI coding assistant)                 │   │
+│  └───────────────┬──────────────────────────┘   │
+│                  │                              │
+│                  ▼                              │
+│  ┌──────────────────────────────────────────┐   │
+│  │         9router (port 20128)             │   │
+│  │    Smart AI router + RTK token saver     │   │
+│  └───────────────┬──────────────────────────┘   │
+│                  │                              │
+│                  ▼                              │
+│  ┌──────────────────────────────────────────┐   │
+│  │         ds2api (port 5001)               │   │
+│  │    DeepSeek Web → OpenAI API             │   │
+│  └───────────────┬──────────────────────────┘   │
+│                  │                              │
+│                  ▼                              │
+│  ┌──────────────────────────────────────────┐   │
+│  │         DeepSeek API                     │   │
+│  │    (Free V4 Flash/Pro models)            │   │
+│  └──────────────────────────────────────────┘   │
+│                                                  │
+│  ┌──────────────────────────────────────────┐   │
+│  │         Hermes Gateway                   │   │
+│  │    Telegram bot + CLI tools              │   │
+│  └──────────────────────────────────────────┘   │
+│                                                  │
+│  ┌──────────────────────────────────────────┐   │
+│  │         Cloudflare Tunnel                │   │
+│  │    SSH access from anywhere              │   │
+│  └──────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────┘
 ```
 
-## Features
+## Services Running
 
-- **Free** - GitHub Actions provides 2,000 minutes/month free
-- **Full Linux environment** - Python, Node.js, Docker, Git
-- **Hermes Agent** - 15+ toolsets (terminal, web, vision, etc.)
-- **Telegram control** - Message your bot from anywhere
-- **SSH access** - Cloudflare tunnel for direct access
-- **Auto-recovery** - Gateway restarts if it crashes
-- **6-hour sessions** - Maximum GitHub Actions timeout
+| Service | Port | Description |
+|---------|------|-------------|
+| ds2api | 5001 | DeepSeek API converter |
+| 9router | 20128 | AI router + dashboard |
+| Claude Code | - | Via 9router |
+| Hermes | - | Telegram bot |
+| SSH | 22 | Via Cloudflare tunnel |
 
 ## Usage Examples
 
-**Via Telegram:**
+**Claude Code (via SSH):**
+```bash
+ssh runner@<tunnel-url>
+# Password: phantom123
+
+# Use Claude Code
+claude "create a REST API with FastAPI"
+claude "debug this Python code"
+claude "write tests for my project"
+```
+
+**Telegram Bot:**
 ```
 /help - Show commands
 /run python script.py - Execute code
@@ -97,59 +131,63 @@ Just message your bot on Telegram!
 /read file.txt - Read files
 ```
 
-**Via SSH:**
-```bash
-ssh runner@<tunnel-url>
-# Password: phantom123
+**9router Dashboard:**
+- Open http://localhost:20128/dashboard
+- View token usage
+- Configure providers
+- Monitor requests
 
-# Run commands
-hermes "install docker"
+## Features
 
-# Check status
-hermes status
-```
+- **Free** - GitHub Actions provides 2,000 minutes/month
+- **Full environment** - Python, Node.js, Docker, Git
+- **Claude Code** - AI coding with DeepSeek backend
+- **Token savings** - RTK saves 20-40% tokens
+- **Auto-recovery** - Services restart if they crash
+- **6-hour sessions** - Maximum GitHub Actions timeout
+
+## DeepSeek Models
+
+| Model | Alias | Thinking |
+|-------|-------|----------|
+| deepseek-v4-flash | claude-sonnet-4-6 | ✅ |
+| deepseek-v4-pro | claude-opus-4-6 | ✅ |
+| deepseek-v4-flash-nothinking | - | ❌ |
+| deepseek-v4-pro-nothinking | - | ❌ |
 
 ## Limitations
 
-- **6-hour max** - GitHub Actions jobs timeout at 6 hours
+- **6-hour max** - GitHub Actions jobs timeout
 - **No persistence** - Data lost when job ends
-- **Public repo** - Code is visible (use private for secrets)
 - **Rate limits** - GitHub API limits apply
-
-## File Structure
-
-```
-phantom-node/
-├── .github/workflows/
-│   └── deploy.yml      # Main workflow
-├── scripts/
-│   └── setup.ps1       # Windows setup (legacy)
-├── CONNECTION.md        # Auto-updated SSH info
-├── README.md           # This file
-└── .gitignore
-```
 
 ## Troubleshooting
 
-**Bot not responding:**
-1. Check secrets are set correctly
-2. Go to Actions → see if workflow is running
-3. Check logs in workflow output
+**Claude Code not working:**
+```bash
+# Check services
+curl http://localhost:5001/healthz  # ds2api
+curl http://localhost:20128          # 9router
+
+# Check config
+cat ~/.claude/config.json
+echo $ANTHROPIC_BASE_URL
+```
+
+**Services crashed:**
+- They auto-restart within 5 minutes
+- Check logs: `cat ds2api.log 9router.log hermes-gateway.log`
 
 **SSH not working:**
-1. Wait 1-2 minutes for tunnel to start
-2. Check CONNECTION.md for updated URL
-3. Password is always: `phantom123`
-
-**Gateway crashed:**
-- It auto-restarts within 5 minutes
-- Check logs: `cat ~/.hermes/gateway.log`
+- Wait 1-2 minutes for tunnel
+- Check CONNECTION.md for updated URL
 
 ## Credits
 
-- [Hermes Agent](https://github.com/NousResearch/hermes-agent) - AI assistant framework
-- [Xiaomi Mimo](https://mimo.xiaomi.com/) - Free AI model
-- [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) - Secure access
+- [ds2api](https://github.com/CJackHwang/ds2api) - DeepSeek to API
+- [9router](https://github.com/decolua/9router) - AI router
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) - AI coding
+- [Hermes Agent](https://github.com/NousResearch/hermes-agent) - Agent framework
 
 ## License
 
