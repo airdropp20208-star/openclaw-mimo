@@ -1,2 +1,2 @@
-SSH: ssh appveyor@sys-surgery-adventures-kay.trycloudflare.com
-Tunnel: https://sys-surgery-adventures-kay.trycloudflare.com
+SSH: ssh appveyor@isp-scales-ventures-convention.trycloudflare.com
+Tunnel: https://isp-scales-ventures-convention.trycloudflare.com
