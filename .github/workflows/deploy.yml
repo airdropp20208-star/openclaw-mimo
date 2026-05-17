@@ -38,436 +38,268 @@ jobs:
         with:
           python-version: '3.11'
 
-      # ==================== INSTALL DS2API ====================
       - name: Install ds2api
         run: |
           echo "=== Installing ds2api ==="
-          
-          # Download ds2api binary
           curl -L -o ds2api.tar.gz "https://github.com/CJackHwang/ds2api/releases/download/v4.6.1/ds2api_v4.6.1_linux_amd64.tar.gz"
           tar -xzf ds2api.tar.gz
           mv ds2api_v4.6.1_linux_amd64 ds2api
           chmod +x ds2api/ds2api
           rm ds2api.tar.gz
-          
-          echo "ds2api downloaded"
-          ls -la ds2api/
+          echo "ds2api installed"
 
-      # ==================== INSTALL 9ROUTER ====================
       - name: Install 9router
         run: |
           echo "=== Installing 9router ==="
           npm install -g 9router
-          9router --version || echo "9router installed"
-          
-          # Create 9router data directory
           mkdir -p ~/.9router
+          echo "9router installed"
 
-      # ==================== INSTALL CLAUDE CODE ====================
       - name: Install Claude Code
         run: |
           echo "=== Installing Claude Code ==="
           npm install -g @anthropic-ai/claude-code
-          claude --version || echo "Claude Code installed"
+          echo "Claude Code installed"
 
-      # ==================== INSTALL HERMES ====================
       - name: Install Hermes
         run: |
           echo "=== Installing Hermes ==="
           pip install --upgrade pip
           pip install hermes-agent
-          hermes --version || echo "Hermes installed"
+          echo "Hermes installed"
 
-      # ==================== CONFIGURE DS2API ====================
       - name: Configure ds2api
         env:
           DS_EMAIL: ${{ github.event.inputs.deepseek_email }}
           DS_PASSWORD: ${{ github.event.inputs.deepseek_password }}
         run: |
-          echo "=== Configuring ds2api ==="
-          
-          # Resolve credentials
           EMAIL="${DS_EMAIL:-tooltdshaha00001@gmail.com}"
           PASS="${DS_PASSWORD:-son22tq2011}"
           
-          cat > ds2api/config.json << EOF
+          cat > ds2api/config.json << 'DSEOF'
           {
             "keys": ["sk-phantom-key"],
-            "accounts": [
-              {
-                "email": "$EMAIL",
-                "password": "$PASS"
-              }
-            ],
+            "accounts": [{"email": "PLACEHOLDER_EMAIL", "password": "PLACEHOLDER_PASS"}],
             "model_aliases": {
               "gpt-4o": "deepseek-v4-flash",
-              "gpt-5.5": "deepseek-v4-flash",
-              "gpt-5.3-codex": "deepseek-v4-pro",
-              "o3": "deepseek-v4-pro",
               "claude-sonnet-4-6": "deepseek-v4-flash",
               "claude-opus-4-6": "deepseek-v4-pro"
             },
-            "runtime": {
-              "account_max_inflight": 2,
-              "account_max_queue": 0,
-              "global_max_inflight": 0,
-              "token_refresh_interval_hours": 6
-            }
+            "runtime": {"account_max_inflight": 2, "token_refresh_interval_hours": 6}
           }
-          EOF
+          DSEOF
           
-          echo "ds2api config created"
-          cat ds2api/config.json
+          # Replace placeholders with actual values
+          sed -i "s/PLACEHOLDER_EMAIL/$EMAIL/g" ds2api/config.json
+          sed -i "s/PLACEHOLDER_PASS/$PASS/g" ds2api/config.json
+          echo "ds2api configured"
 
-      # ==================== START DS2API ====================
       - name: Start ds2api
         run: |
-          echo "=== Starting ds2api ==="
           cd ds2api
           nohup ./ds2api > ../ds2api.log 2>&1 &
           echo $! > ../ds2api.pid
           cd ..
-          
-          # Wait for startup
           sleep 5
-          
-          # Health check
           if curl -s http://localhost:5001/healthz > /dev/null 2>&1; then
             echo "ds2api running on port 5001"
           else
-            echo "ds2api health check failed, checking logs..."
-            cat ds2api.log
-            # Try again
+            echo "ds2api starting, waiting more..."
             sleep 5
-            if curl -s http://localhost:5001/healthz > /dev/null 2>&1; then
-              echo "ds2api running after retry"
-            else
-              echo "ds2api failed to start"
-              cat ds2api.log
-            fi
+            cat ds2api.log | tail -10
           fi
 
-      # ==================== START 9ROUTER ====================
       - name: Start 9router
         run: |
-          echo "=== Starting 9router ==="
-          
-          # Start 9router in background
           nohup 9router > 9router.log 2>&1 &
           echo $! > 9router.pid
-          
-          # Wait for startup
           sleep 10
-          
-          # Check if running
           if curl -s http://localhost:20128 > /dev/null 2>&1; then
             echo "9router running on port 20128"
-            echo "Dashboard: http://localhost:20128/dashboard"
           else
-            echo "9router health check failed"
-            cat 9router.log | tail -20
+            echo "9router starting..."
+            cat 9router.log | tail -10
           fi
 
-      # ==================== CONFIGURE CLAUDE CODE ====================
       - name: Configure Claude Code
         run: |
-          echo "=== Configuring Claude Code ==="
-          
-          # Create Claude config directory
           mkdir -p ~/.claude
-          
-          # Configure Claude Code to use 9router → ds2api → DeepSeek
-          cat > ~/.claude/config.json << EOF
-          {
-            "anthropic_api_base": "http://localhost:20128/v1",
-            "anthropic_api_key": "sk-phantom-key"
-          }
-          EOF
-          
-          # Also set environment variables
+          echo '{"anthropic_api_base":"http://localhost:20128/v1","anthropic_api_key":"sk-phantom-key"}' > ~/.claude/config.json
           echo 'export ANTHROPIC_BASE_URL=http://localhost:20128/v1' >> ~/.bashrc
           echo 'export ANTHROPIC_API_KEY=sk-phantom-key' >> ~/.bashrc
-          
-          echo "Claude Code configured"
-          echo "Flow: Claude Code → 9router (20128) → ds2api (5001) → DeepSeek"
+          echo "Claude Code configured: 9router → ds2api → DeepSeek"
 
-      # ==================== CONFIGURE HERMES ====================
       - name: Configure Hermes
         env:
           API_KEY: ${{ github.event.inputs.api_key }}
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           XIAOMI_API_KEY: ${{ secrets.XIAOMI_API_KEY }}
         run: |
-          echo "=== Configuring Hermes ==="
-          
-          # Resolve API key
-          if [ -n "$API_KEY" ]; then
-            XM_KEY="$API_KEY"
-          elif [ -n "$XIAOMI_API_KEY" ]; then
-            XM_KEY="$XIAOMI_API_KEY"
-          else
-            XM_KEY="YOUR_KEY_HERE"
-          fi
-          
-          # Create config directory
+          XM_KEY="${API_KEY:-${XIAOMI_API_KEY:-YOUR_KEY_HERE}}"
           mkdir -p ~/.hermes
           
-          # Write .env
-          cat > ~/.hermes/.env << EOF
-          XIAOMI_API_KEY=$XM_KEY
-          GATEWAY_ALLOW_ALL_USERS=true
-          ANTHROPIC_BASE_URL=http://localhost:20128/v1
-          ANTHROPIC_API_KEY=sk-phantom-key
-          EOF
+          cat > ~/.hermes/.env << ENVEOF
+XIAOMI_API_KEY=$XM_KEY
+GATEWAY_ALLOW_ALL_USERS=true
+ANTHROPIC_BASE_URL=http://localhost:20128/v1
+ANTHROPIC_API_KEY=sk-phantom-key
+ENVEOF
           
-          # Write config.yaml
-          cat > ~/.hermes/config.yaml << EOF
-          model:
-            default: mimo-v2.5
-            provider: xiaomi
-            base_url: https://api.xiaomimimo.com/v1
-          providers: {}
-          fallback_providers: []
-          toolsets:
-            - hermes-cli
-          agent:
-            max_turns: 90
-            gateway_timeout: 1800
-            api_max_retries: 3
-            tool_use_enforcement: auto
-            disabled_toolsets: []
-          terminal:
-            backend: local
-            timeout: 300
-            persistent_shell: true
-          display:
-            personality: kawaii
-            language: vi
-          security:
-            allow_private_urls: true
-            redact_secrets: true
-            allow_lazy_installs: true
-          memory:
-            memory_enabled: true
-            user_profile_enabled: true
-          context:
-            engine: compressor
-          compression:
-            enabled: true
-          telegram:
-            bot_token: $BOT_TOKEN
-            allowed_chats: '*'
-            reactions: false
-            channel_prompts: {}
-          platform_toolsets:
-            cli:
-              - browser
-              - clarify
-              - code_execution
-              - cronjob
-              - delegation
-              - file
-              - image_gen
-              - memory
-              - session_search
-              - skills
-              - terminal
-              - todo
-              - tts
-              - vision
-              - web
-          _config_version: 23
-          EOF
-          
+          cat > ~/.hermes/config.yaml << YAMLEOF
+model:
+  default: mimo-v2.5
+  provider: xiaomi
+  base_url: https://api.xiaomimimo.com/v1
+providers: {}
+fallback_providers: []
+toolsets:
+  - hermes-cli
+agent:
+  max_turns: 90
+  gateway_timeout: 1800
+  api_max_retries: 3
+  tool_use_enforcement: auto
+  disabled_toolsets: []
+terminal:
+  backend: local
+  timeout: 300
+  persistent_shell: true
+display:
+  personality: kawaii
+  language: vi
+security:
+  allow_private_urls: true
+  redact_secrets: true
+  allow_lazy_installs: true
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+context:
+  engine: compressor
+compression:
+  enabled: true
+telegram:
+  bot_token: $BOT_TOKEN
+  allowed_chats: '*'
+  reactions: false
+  channel_prompts: {}
+platform_toolsets:
+  cli:
+    - browser
+    - clarify
+    - code_execution
+    - cronjob
+    - delegation
+    - file
+    - image_gen
+    - memory
+    - session_search
+    - skills
+    - terminal
+    - todo
+    - tts
+    - vision
+    - web
+_config_version: 23
+YAMLEOF
           echo "Hermes configured"
 
-      # ==================== START HERMES GATEWAY ====================
       - name: Start Hermes Gateway
         run: |
-          echo "=== Starting Hermes Gateway ==="
-          
-          # Start gateway in background
           nohup hermes gateway > hermes-gateway.log 2>&1 &
           echo $! > hermes-gateway.pid
-          
-          # Wait for startup
           sleep 10
-          
-          # Check if running
           if kill -0 $(cat hermes-gateway.pid) 2>/dev/null; then
             echo "Hermes gateway started"
-            tail -20 hermes-gateway.log
+            tail -5 hermes-gateway.log
           else
-            echo "Hermes gateway failed to start"
-            cat hermes-gateway.log
+            echo "Hermes gateway failed"
+            cat hermes-gateway.log | tail -20
           fi
 
-      # ==================== SETUP SSH TUNNEL ====================
       - name: Setup SSH Tunnel
         run: |
-          echo "=== Setting up SSH Tunnel ==="
-          
           # Install cloudflared
           curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
           chmod +x /usr/local/bin/cloudflared
           
-          # Install openssh-server
+          # Install and configure SSH
           sudo apt-get update -qq
           sudo apt-get install -y -qq openssh-server
           sudo systemctl start ssh
-          
-          # Configure SSH
           sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
-          sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
-          
-          # Set password for runner user
           echo "runner:phantom123" | sudo chpasswd
+          sudo systemctl restart ssh
           
           # Start tunnel
           cloudflared tunnel --url ssh://localhost:22 > tunnel.log 2>&1 &
           echo $! > tunnel.pid
-          
-          # Wait for tunnel URL
           sleep 15
+          
           TUNNEL_URL=$(grep -o 'https://[^ ]*\.trycloudflare\.com' tunnel.log | head -1)
           
           if [ -n "$TUNNEL_URL" ]; then
             echo "TUNNEL_URL=$TUNNEL_URL"
-            echo "SSH: ssh runner@$TUNNEL_URL"
-            echo "Password: phantom123"
+            echo "SSH: ssh runner@$TUNNEL_URL (password: phantom123)"
             
             # Update CONNECTION.md
-            cat > CONNECTION.md << EOF
-            # Connection Info
+            cat > CONNECTION.md << TNLEOF
+# Connection Info
+
+## SSH Access
+ssh runner@$TUNNEL_URL
+Password: phantom123
+
+## Services
+- ds2api: http://localhost:5001
+- 9router: http://localhost:20128
+- Claude Code: Ready
+- Hermes Gateway: Running
+- Telegram Bot: Connected
+
+## Claude Code
+ssh runner@$TUNNEL_URL
+claude "your prompt here"
+TNLEOF
             
-            ## SSH Access
-            \`\`\`
-            ssh runner@$TUNNEL_URL
-            Password: phantom123
-            \`\`\`
-            
-            ## Services Running
-            - ds2api: http://localhost:5001
-            - 9router: http://localhost:20128
-            - Claude Code: Configured (via 9router)
-            - Hermes Gateway: Running
-            - Telegram Bot: Connected
-            
-            ## Claude Code Usage
-            \`\`\`
-            # SSH into the runner
-            ssh runner@$TUNNEL_URL
-            Password: phantom123
-            
-            # Use Claude Code (routed through DeepSeek)
-            claude "your prompt here"
-            \`\`\`
-            EOF
-            
-            # Commit connection info
             git config user.email "bot@phantom-node"
             git config user.name "Phantom Bot"
             git add CONNECTION.md
-            git commit -m "chore: update connection info [skip ci]" || true
+            git commit -m "chore: update connection [skip ci]" || true
             git push
           else
-            echo "Tunnel URL not found yet"
-            cat tunnel.log
+            echo "Tunnel URL not found"
+            cat tunnel.log | tail -20
           fi
 
-      # ==================== VERIFY ALL SERVICES ====================
       - name: Verify Services
         run: |
-          echo "=== Verifying All Services ==="
+          echo "=== Service Status ==="
+          curl -s http://localhost:5001/healthz > /dev/null && echo "✅ ds2api: OK" || echo "❌ ds2api: FAIL"
+          curl -s http://localhost:20128 > /dev/null && echo "✅ 9router: OK" || echo "❌ 9router: FAIL"
+          command -v claude > /dev/null && echo "✅ Claude Code: OK" || echo "❌ Claude Code: FAIL"
+          command -v hermes > /dev/null && echo "✅ Hermes: OK" || echo "❌ Hermes: FAIL"
+          kill -0 $(cat hermes-gateway.pid 2>/dev/null) 2>/dev/null && echo "✅ Gateway: OK" || echo "❌ Gateway: FAIL"
+          kill -0 $(cat tunnel.pid 2>/dev/null) 2>/dev/null && echo "✅ Tunnel: OK" || echo "❌ Tunnel: FAIL"
           echo ""
-          
-          # Check ds2api
-          if curl -s http://localhost:5001/healthz > /dev/null 2>&1; then
-            echo "✅ ds2api: Running on port 5001"
-          else
-            echo "❌ ds2api: NOT running"
-          fi
-          
-          # Check 9router
-          if curl -s http://localhost:20128 > /dev/null 2>&1; then
-            echo "✅ 9router: Running on port 20128"
-          else
-            echo "❌ 9router: NOT running"
-          fi
-          
-          # Check Claude Code
-          if command -v claude &> /dev/null; then
-            echo "✅ Claude Code: Installed"
-          else
-            echo "❌ Claude Code: NOT installed"
-          fi
-          
-          # Check Hermes
-          if command -v hermes &> /dev/null; then
-            echo "✅ Hermes: Installed"
-          else
-            echo "❌ Hermes: NOT installed"
-          fi
-          
-          # Check gateway
-          if kill -0 $(cat hermes-gateway.pid) 2>/dev/null; then
-            echo "✅ Hermes Gateway: Running"
-          else
-            echo "❌ Hermes Gateway: NOT running"
-          fi
-          
-          # Check tunnel
-          if kill -0 $(cat tunnel.pid) 2>/dev/null; then
-            echo "✅ SSH Tunnel: Running"
-          else
-            echo "❌ SSH Tunnel: NOT running"
-          fi
-          
-          echo ""
-          echo "=== Flow ==="
-          echo "Claude Code → 9router (20128) → ds2api (5001) → DeepSeek"
-          echo ""
+          echo "Flow: Claude Code → 9router (20128) → ds2api (5001) → DeepSeek"
 
-      # ==================== KEEP ALIVE ====================
       - name: Keep Alive
         run: |
-          echo "=== Phantom Node is Running! ==="
-          echo ""
-          echo "Services:"
-          echo "  - ds2api: http://localhost:5001"
-          echo "  - 9router: http://localhost:20128"
-          echo "  - Claude Code: Ready"
-          echo "  - Hermes Gateway: Running"
-          echo ""
-          echo "SSH: ssh runner@<tunnel-url> (password: phantom123)"
+          echo "Phantom Node running! Services:"
+          echo "  ds2api: http://localhost:5001"
+          echo "  9router: http://localhost:20128"
+          echo "  Claude Code: Ready"
+          echo "  SSH: ssh runner@<tunnel>"
           echo ""
           
-          # Keep alive loop - heartbeat every 5 minutes
           while true; do
-            # Check ds2api
-            if ! curl -s http://localhost:5001/healthz > /dev/null 2>&1; then
-              echo "[$(date)] ds2api died, restarting..."
-              cd ds2api && nohup ./ds2api > ../ds2api.log 2>&1 & echo $! > ../ds2api.pid && cd ..
-            fi
+            # Restart crashed services
+            curl -s http://localhost:5001/healthz > /dev/null 2>&1 || (cd ds2api && nohup ./ds2api > ../ds2api.log 2>&1 & echo $! > ../ds2api.pid && cd ..)
+            curl -s http://localhost:20128 > /dev/null 2>&1 || (nohup 9router > 9router.log 2>&1 & echo $! > 9router.pid)
+            kill -0 $(cat hermes-gateway.pid 2>/dev/null) 2>/dev/null || (nohup hermes gateway > hermes-gateway.log 2>&1 & echo $! > hermes-gateway.pid)
+            kill -0 $(cat tunnel.pid 2>/dev/null) 2>/dev/null || (nohup cloudflared tunnel --url ssh://localhost:22 > tunnel.log 2>&1 & echo $! > tunnel.pid)
             
-            # Check 9router
-            if ! curl -s http://localhost:20128 > /dev/null 2>&1; then
-              echo "[$(date)] 9router died, restarting..."
-              nohup 9router > 9router.log 2>&1 & echo $! > 9router.pid
-            fi
-            
-            # Check gateway
-            if ! kill -0 $(cat hermes-gateway.pid) 2>/dev/null; then
-              echo "[$(date)] Gateway died, restarting..."
-              nohup hermes gateway > hermes-gateway.log 2>&1 & echo $! > hermes-gateway.pid
-            fi
-            
-            # Check tunnel
-            if ! kill -0 $(cat tunnel.pid) 2>/dev/null; then
-              echo "[$(date)] Tunnel died, restarting..."
-              nohup cloudflared tunnel --url ssh://localhost:22 > tunnel.log 2>&1 & echo $! > tunnel.pid
-            fi
-            
-            echo "[$(date)] Heartbeat - All services OK"
+            echo "[$(date)] Heartbeat OK"
             sleep 300
           done
