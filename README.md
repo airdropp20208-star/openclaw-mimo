@@ -1,43 +1,156 @@
 # Phantom Node
 
-Free Windows VPS via AppVeyor with Hermes pre-installed.
+> Free AI environment via GitHub Actions + Telegram control
 
-## Setup
+## What is this?
 
-1. **Configure Secrets** (optional but recommended):
-   - Go to repo → Settings → Secrets and variables → Actions
-   - Add `BOT_TOKEN` — your Telegram bot token
-   - Add `XIAOMI_API_KEY` — your Mimo API key
-   - If not set, falls back to hardcoded defaults
+A free Windows/Ubuntu VPS powered by GitHub Actions with:
+- **Hermes Agent** - AI assistant with tools
+- **Xiaomi Mimo 2.5** - Free AI model
+- **Telegram Bot** - Control from your phone
+- **SSH Access** - Via Cloudflare tunnel
 
-2. **Run Workflow**:
-   - Go to Actions → Deploy → Run workflow
-   - Optionally provide an `api_key` (overrides secrets)
+## How it works
 
-3. **Connect**:
-   - Read `CONNECTION.md` for SSH/RDP details
-   - SSH: `ssh appveyor@<tunnel-url>`
-   - Gateway auto-starts on login via Task Scheduler
+```
+GitHub Actions Runner (Ubuntu)
+├── Python 3.11 + Node.js 20
+├── Hermes Agent + Gateway
+├── Xiaomi Mimo 2.5 API
+├── Telegram Bot Connection
+└── Cloudflare Tunnel (SSH)
+```
 
-## Files
+## Setup (2 minutes)
 
-| File | Purpose |
-|------|---------|
-| `~/.hermes/config.yaml` | Main config |
-| `~/.hermes/.env` | API keys |
-| `C:\start.bat` | Start gateway |
-| `C:\cli.bat` | Interactive CLI |
+### 1. Fork this repo
 
-## Dev Tools Included
+### 2. Add Secrets
 
-- **Python**: flask, fastapi, uvicorn, pandas, numpy, pytest, black, ruff
-- **Node.js**: typescript, ts-node, nodemon, pm2, yarn, pnpm
-- **Docker**: CLI only (no daemon)
-- **Hermes**: agent + gateway + all toolsets
-
-## Secrets
+Go to **Settings → Secrets and variables → Actions**:
 
 | Secret | Description | Required |
 |--------|-------------|----------|
-| `BOT_TOKEN` | Telegram bot token | No (default built-in) |
-| `XIAOMI_API_KEY` | Mimo API key | No (enter at dispatch) |
+| `BOT_TOKEN` | Telegram bot token from @BotFather | Yes |
+| `XIAOMI_API_KEY` | Your Mimo API key | Yes |
+
+### 3. Run Workflow
+
+Go to **Actions → Deploy → Run workflow**
+
+Optionally provide an `api_key` to override the secret.
+
+### 4. Connect
+
+**SSH Access:**
+```bash
+ssh runner@<tunnel-url>
+Password: phantom123
+```
+
+**Telegram Bot:**
+Just message your bot on Telegram!
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────┐
+│           GitHub Actions Runner             │
+│  ┌─────────────────────────────────────┐    │
+│  │        Hermes Agent Gateway         │    │
+│  │  ┌──────────┐  ┌────────────────┐  │    │
+│  │  │ Telegram │  │   CLI Tools    │  │    │
+│  │  │   Bot    │  │  (terminal,    │  │    │
+│  │  └──────────┘  │   file, web)   │  │    │
+│  │                 └────────────────┘  │    │
+│  └─────────────────────────────────────┘    │
+│  ┌─────────────────────────────────────┐    │
+│  │        Cloudflare Tunnel           │    │
+│  │        (SSH Access)                │    │
+│  └─────────────────────────────────────┘    │
+└─────────────────────────────────────────────┘
+           │
+           ▼
+    ┌──────────────┐
+    │   Your Phone │
+    │  (Telegram)  │
+    └──────────────┘
+```
+
+## Features
+
+- **Free** - GitHub Actions provides 2,000 minutes/month free
+- **Full Linux environment** - Python, Node.js, Docker, Git
+- **Hermes Agent** - 15+ toolsets (terminal, web, vision, etc.)
+- **Telegram control** - Message your bot from anywhere
+- **SSH access** - Cloudflare tunnel for direct access
+- **Auto-recovery** - Gateway restarts if it crashes
+- **6-hour sessions** - Maximum GitHub Actions timeout
+
+## Usage Examples
+
+**Via Telegram:**
+```
+/help - Show commands
+/run python script.py - Execute code
+/search something - Web search
+/read file.txt - Read files
+```
+
+**Via SSH:**
+```bash
+ssh runner@<tunnel-url>
+# Password: phantom123
+
+# Run commands
+hermes "install docker"
+
+# Check status
+hermes status
+```
+
+## Limitations
+
+- **6-hour max** - GitHub Actions jobs timeout at 6 hours
+- **No persistence** - Data lost when job ends
+- **Public repo** - Code is visible (use private for secrets)
+- **Rate limits** - GitHub API limits apply
+
+## File Structure
+
+```
+phantom-node/
+├── .github/workflows/
+│   └── deploy.yml      # Main workflow
+├── scripts/
+│   └── setup.ps1       # Windows setup (legacy)
+├── CONNECTION.md        # Auto-updated SSH info
+├── README.md           # This file
+└── .gitignore
+```
+
+## Troubleshooting
+
+**Bot not responding:**
+1. Check secrets are set correctly
+2. Go to Actions → see if workflow is running
+3. Check logs in workflow output
+
+**SSH not working:**
+1. Wait 1-2 minutes for tunnel to start
+2. Check CONNECTION.md for updated URL
+3. Password is always: `phantom123`
+
+**Gateway crashed:**
+- It auto-restarts within 5 minutes
+- Check logs: `cat ~/.hermes/gateway.log`
+
+## Credits
+
+- [Hermes Agent](https://github.com/NousResearch/hermes-agent) - AI assistant framework
+- [Xiaomi Mimo](https://mimo.xiaomi.com/) - Free AI model
+- [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) - Secure access
+
+## License
+
+MIT

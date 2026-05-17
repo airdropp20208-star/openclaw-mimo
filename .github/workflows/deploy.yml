@@ -1,249 +1,234 @@
-name: Deploy
+name: Deploy Phantom Node
 
 on:
   workflow_dispatch:
     inputs:
       api_key:
-        description: "Mimo API Key (optional)"
+        description: "Xiaomi Mimo API Key"
         required: false
         default: ""
 
 permissions:
   contents: write
 
+env:
+  TELEGRAM_BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+  XIAOMI_API_KEY: ${{ secrets.XIAOMI_API_KEY }}
+
 jobs:
-  setup:
-    runs-on: windows-latest
-    timeout-minutes: 360
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Install
-        shell: pwsh
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Hermes
         run: |
-          $ErrorActionPreference = "Continue"
-          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-          $env:PATH = "C:\Python311;C:\Python311\Scripts;C:\nodejs;C:\nodejs\node_modules\.bin;" + $env:PATH
+          pip install --upgrade pip
+          pip install hermes-agent
+          hermes --version
 
-          # === RDP ===
-          try { iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1')) } catch {}
-
-          # === SSH ===
-          try {
-              Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 2>$null
-              Start-Service sshd -ErrorAction SilentlyContinue
-              Set-Service sshd -StartupType Automatic
-              $sc = "$env:ProgramData\ssh\sshd_config"
-              (Get-Content $sc) -replace '#PasswordAuthentication yes','PasswordAuthentication yes' | Set-Content $sc
-              Restart-Service sshd -ErrorAction SilentlyContinue
-          } catch {}
-
-          # === Cloudflare Tunnel ===
-          Write-Host "=== Tunnel ===" -ForegroundColor Cyan
-          try {
-              Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "C:\cf.exe"
-              Start-Process "C:\cf.exe" "tunnel --url ssh://localhost:22" -NoNewWindow -RedirectStandardError "C:\cf.log"
-              $url = $null
-              for ($t=1; $t -le 12; $t++) {
-                  Start-Sleep 5
-                  $match = (Get-Content "C:\cf.log" -EA SilentlyContinue | Select-String "https://[a-zA-Z0-9\-]+\.trycloudflare\.com")
-                  if ($match) { $url = $match.Matches[0].Value; break }
-                  Write-Host "Waiting for tunnel... ($t/12)"
-              }
-              if (-not $url) { $url = "(tunnel-pending)" }
-              Write-Host "TUNNEL=$url" -ForegroundColor Green
-          } catch { $url = "(unavailable)" }
-
-          # === Python ===
-          Write-Host "=== Python ===" -ForegroundColor Cyan
-          if (!(Test-Path "C:\Python311\python.exe")) {
-              Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe" -OutFile "C:\py.exe"
-              Start-Process "C:\py.exe" -ArgumentList "/quiet","InstallAllUsers=1","PrependPath=1","Include_pip=1" -Wait
-              Remove-Item "C:\py.exe" -Force
-          }
-          python --version
-
-          # === Node.js ===
-          Write-Host "=== Node ===" -ForegroundColor Cyan
-          if (!(Test-Path "C:\nodejs\node.exe")) {
-              Invoke-WebRequest -Uri "https://nodejs.org/dist/v20.11.1/node-v20.11.1-x64.msi" -OutFile "C:\node.msi"
-              Start-Process "msiexec.exe" -ArgumentList "/i","C:\node.msi","/quiet","INSTALLDIR=C:\nodejs" -Wait
-              Remove-Item "C:\node.msi" -Force
-          }
-          node --version
-
-          # === Git ===
-          Write-Host "=== Git ===" -ForegroundColor Cyan
-          if (!(Test-Path "C:\Program Files\Git\cmd\git.exe")) {
-              Invoke-WebRequest -Uri "https://github.com/git-for-windows/git/releases/download/v2.44.0.windows.1/Git-2.44.0-64-bit.exe" -OutFile "C:\git.exe"
-              Start-Process "C:\git.exe" -ArgumentList "/VERYSILENT","/NORESTART" -Wait
-              Remove-Item "C:\git.exe" -Force
-          }
-          git --version
-
-          # === Python packages ===
-          Write-Host "=== Packages ===" -ForegroundColor Cyan
-          pip install --upgrade pip 2>&1 | Out-Null
-          pip install hermes-agent flask fastapi uvicorn requests httpx pandas numpy pyyaml rich click pytest 2>&1 | Out-Null
-          npm install -g yarn pnpm typescript ts-node nodemon pm2 2>&1 | Out-Null
-
-          # === Hermes version ===
-          try { $v = hermes --version 2>&1; Write-Host "Hermes: $v" -ForegroundColor Green } catch { Write-Warning "hermes version check failed" }
-
-          # === Connection info ===
-          $sshHost = if ($url -and $url -notlike "(*") { ($url -replace 'https://','') } else { "<tunnel-pending>" }
-          $conn = "SSH: ssh appveyor@$sshHost`nTunnel: $url"
-          Set-Content -Path "CONNECTION.md" -Value $conn -Encoding utf8
-          git config user.email "dev@workspace"
-          git config user.name "Developer"
-          git add CONNECTION.md
-          if (git diff --cached --quiet) {} else { git commit -m "chore: connection [skip ci]" -m "[skip ci]"; git push }
-
-      - name: Configure
-        shell: pwsh
+      - name: Configure Hermes
         env:
           API_KEY: ${{ github.event.inputs.api_key }}
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          XIAOMI_API_KEY: ${{ secrets.XIAOMI_API_KEY }}
-          ALLOWED_CHATS: ${{ secrets.ALLOWED_CHATS }}
         run: |
-          $h = "$env:USERPROFILE\.hermes"
-          New-Item -ItemType Directory -Force -Path $h | Out-Null
-
           # Resolve API key
-          $apiKey = if ($env:API_KEY -and $env:API_KEY -ne "") { $env:API_KEY }
-                    elseif ($env:XIAOMI_API_KEY) { $env:XIAOMI_API_KEY }
-                    else { "YOUR_KEY_HERE" }
+          if [ -n "$API_KEY" ]; then
+            XM_KEY="$API_KEY"
+          elif [ -n "$XIAOMI_API_KEY" ]; then
+            XM_KEY="$XIAOMI_API_KEY"
+          else
+            XM_KEY="YOUR_KEY_HERE"
+          fi
 
-          # Write .env — include gateway allow-all flag
-          $envContent = "XIAOMI_API_KEY=$apiKey`nGATEWAY_ALLOW_ALL_USERS=true"
-          Set-Content -Path "$h\.env" -Value $envContent -Encoding utf8
-          Write-Host ".env written" -ForegroundColor Green
+          # Create config directory
+          mkdir -p ~/.hermes
 
-          # Config YAML — string concat, NO here-strings
-          $c = "model:`n"
-          $c += "  default: mimo-v2.5`n"
-          $c += "  provider: xiaomi`n"
-          $c += "  base_url: https://api.xiaomimimo.com/v1`n"
-          $c += "providers: {}`n"
-          $c += "fallback_providers: []`n"
-          $c += "toolsets:`n"
-          $c += "  - hermes-cli`n"
-          $c += "agent:`n"
-          $c += "  max_turns: 90`n"
-          $c += "  gateway_timeout: 1800`n"
-          $c += "  api_max_retries: 3`n"
-          $c += "  tool_use_enforcement: auto`n"
-          $c += "  disabled_toolsets: []`n"
-          $c += "terminal:`n"
-          $c += "  backend: local`n"
-          $c += "  timeout: 300`n"
-          $c += "  persistent_shell: true`n"
-          $c += "display:`n"
-          $c += "  personality: kawaii`n"
-          $c += "  language: vi`n"
-          $c += "  language_name: Tieng Viet`n"
-          $c += "security:`n"
-          $c += "  allow_private_urls: true`n"
-          $c += "  redact_secrets: true`n"
-          $c += "  allow_lazy_installs: true`n"
-          $c += "memory:`n"
-          $c += "  memory_enabled: true`n"
-          $c += "  user_profile_enabled: true`n"
-          $c += "context:`n"
-          $c += "  engine: compressor`n"
-          $c += "compression:`n"
-          $c += "  enabled: true`n"
-          $c += "telegram:`n"
-          $c += "  bot_token: $($env:BOT_TOKEN)`n"
-          $c += "  allowed_chats: '$env:ALLOWED_CHATS'`n"
-          $c += "  reactions: false`n"
-          $c += "  channel_prompts: {}`n"
-          $c += "platform_toolsets:`n"
-          $c += "  cli:`n"
-          $c += "    - browser`n"
-          $c += "    - clarify`n"
-          $c += "    - code_execution`n"
-          $c += "    - cronjob`n"
-          $c += "    - delegation`n"
-          $c += "    - file`n"
-          $c += "    - image_gen`n"
-          $c += "    - memory`n"
-          $c += "    - session_search`n"
-          $c += "    - skills`n"
-          $c += "    - terminal`n"
-          $c += "    - todo`n"
-          $c += "    - tts`n"
-          $c += "    - vision`n"
-          $c += "    - web`n"
-          $c += "_config_version: 23`n"
-          Set-Content -Path "$h\config.yaml" -Value $c -Encoding utf8
-          Write-Host "config.yaml written" -ForegroundColor Green
+          # Write .env
+          cat > ~/.hermes/.env << EOF
+          XIAOMI_API_KEY=$XM_KEY
+          GATEWAY_ALLOW_ALL_USERS=true
+          EOF
 
-          # Verify config
-          $yaml = Get-Content "$h\config.yaml" -Raw
-          if ($yaml -match "bot_token:") { Write-Host "bot_token found in config" -ForegroundColor Green } else { Write-Warning "bot_token NOT found!" }
-          if ($yaml -match "allowed_chats:") { Write-Host "allowed_chats found in config" -ForegroundColor Green } else { Write-Warning "allowed_chats NOT found!" }
-          if ($yaml -match "telegram:") { Write-Host "telegram section found" -ForegroundColor Green } else { Write-Warning "telegram section NOT found!" }
+          # Write config.yaml
+          cat > ~/.hermes/config.yaml << EOF
+          model:
+            default: mimo-v2.5
+            provider: xiaomi
+            base_url: https://api.xiaomimimo.com/v1
+          providers: {}
+          fallback_providers: []
+          toolsets:
+            - hermes-cli
+          agent:
+            max_turns: 90
+            gateway_timeout: 1800
+            api_max_retries: 3
+            tool_use_enforcement: auto
+            disabled_toolsets: []
+          terminal:
+            backend: local
+            timeout: 300
+            persistent_shell: true
+          display:
+            personality: kawaii
+            language: vi
+          security:
+            allow_private_urls: true
+            redact_secrets: true
+            allow_lazy_installs: true
+          memory:
+            memory_enabled: true
+            user_profile_enabled: true
+          context:
+            engine: compressor
+          compression:
+            enabled: true
+          telegram:
+            bot_token: $TELEGRAM_BOT_TOKEN
+            allowed_chats: '*'
+            reactions: false
+            channel_prompts: {}
+          platform_toolsets:
+            cli:
+              - browser
+              - clarify
+              - code_execution
+              - cronjob
+              - delegation
+              - file
+              - image_gen
+              - memory
+              - session_search
+              - skills
+              - terminal
+              - todo
+              - tts
+              - vision
+              - web
+          _config_version: 23
+          EOF
 
-          # Startup scripts
-          Set-Content -Path "C:\start.bat" -Value "@echo off`r`nhermes gateway`r`npause" -Encoding ascii
-          Set-Content -Path "C:\cli.bat" -Value "@echo off`r`nhermes`r`npause" -Encoding ascii
+          echo "Config created"
+          cat ~/.hermes/config.yaml | grep -A 5 "telegram:"
 
-          # Print bot token status
-          if ($env:BOT_TOKEN) { Write-Host "BOT_TOKEN set: $($env:BOT_TOKEN.Substring(0, [Math]::Min(10, $env:BOT_TOKEN.Length)))..." -ForegroundColor Green }
-          else { Write-Warning "BOT_TOKEN is EMPTY!" }
-
-      - name: Launch Gateway
-        shell: pwsh
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          XIAOMI_API_KEY: ${{ secrets.XIAOMI_API_KEY }}
-          API_KEY: ${{ github.event.inputs.api_key }}
-          GATEWAY_ALLOW_ALL_USERS: "true"
+      - name: Start Gateway
         run: |
-          $ErrorActionPreference = "Continue"
-          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-          $env:PATH = "C:\Python311;C:\Python311\Scripts;" + $env:PATH
+          # Start Hermes gateway in background
+          nohup hermes gateway > ~/.hermes/gateway.log 2>&1 &
+          echo $! > ~/.hermes/gateway.pid
+          
+          # Wait for startup
+          sleep 10
+          
+          # Check if running
+          if kill -0 $(cat ~/.hermes/gateway.pid) 2>/dev/null; then
+            echo "Gateway started successfully"
+            tail -20 ~/.hermes/gateway.log
+          else
+            echo "Gateway failed to start"
+            cat ~/.hermes/gateway.log
+            exit 1
+          fi
 
-          $h = "$env:USERPROFILE\.hermes"
+      - name: Setup SSH Tunnel
+        run: |
+          # Install cloudflared
+          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+          chmod +x /usr/local/bin/cloudflared
+          
+          # Install openssh-server
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq openssh-server
+          sudo systemctl start ssh
+          
+          # Configure SSH
+          sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+          
+          # Set password for runner user
+          echo "runner:phantom123" | sudo chpasswd
+          
+          # Start tunnel
+          cloudflared tunnel --url ssh://localhost:22 > ~/.hermes/tunnel.log 2>&1 &
+          echo $! > ~/.hermes/tunnel.pid
+          
+          # Wait for tunnel URL
+          sleep 15
+          TUNNEL_URL=$(grep -o 'https://[^ ]*\.trycloudflare\.com' ~/.hermes/tunnel.log | head -1)
+          
+          if [ -n "$TUNNEL_URL" ]; then
+            echo "TUNNEL_URL=$TUNNEL_URL" >> ~/.hermes/.env
+            echo "SSH: ssh runner@$TUNNEL_URL"
+            echo "Password: phantom123"
+            
+            # Update CONNECTION.md
+            cat > CONNECTION.md << EOF
+            # Connection Info
+            
+            ## SSH Access
+            \`\`\`
+            ssh runner@$TUNNEL_URL
+            Password: phantom123
+            \`\`\`
+            
+            ## Telegram Bot
+            Control via your Telegram bot
+            
+            ## Status
+            - Gateway: Running
+            - Tunnel: Active
+            - API: Xiaomi Mimo 2.5
+            EOF
+            
+            # Commit connection info
+            git config user.email "bot@phantom-node"
+            git config user.name "Phantom Bot"
+            git add CONNECTION.md
+            git commit -m "chore: update connection info [skip ci]" || true
+            git push
+          else
+            echo "Tunnel URL not found yet"
+            cat ~/.hermes/tunnel.log
+          fi
 
-          # Set env vars for gateway
-          $env:GATEWAY_ALLOW_ALL_USERS = "true"
-          if ($env:BOT_TOKEN) { $env:TELEGRAM_BOT_TOKEN = $env:BOT_TOKEN }
-          if ($env:XIAOMI_API_KEY) { $env:XIAOMI_API_KEY = $env:XIAOMI_API_KEY }
-
-          Write-Host "=== Starting Hermes Gateway ===" -ForegroundColor Cyan
-          Write-Host "Config: $h\config.yaml" -ForegroundColor Gray
-          Write-Host "Env: $h\.env" -ForegroundColor Gray
-
-          # Verify config one more time
-          $cfgContent = Get-Content "$h\config.yaml" -Raw
-          Write-Host "--- Config preview (telegram section) ---" -ForegroundColor Yellow
-          $lines = $cfgContent -split "`n"
-          $inTelegram = $false
-          foreach ($line in $lines) {
-              if ($line -match "^telegram:") { $inTelegram = $true }
-              if ($inTelegram) {
-                  Write-Host "  $line"
-                  if ($line -match "^  \w" -and $line -notmatch "^  bot_token" -and $line -notmatch "^  allowed" -and $line -notmatch "^  reaction" -and $line -notmatch "^  channel") {
-                      if ($line -notmatch "^\s*$") { $inTelegram = $false }
-                  }
-              }
-          }
-
-          # Start gateway — keep process alive in foreground
-          Write-Host "Launching hermes gateway..." -ForegroundColor Green
-          try {
-              hermes gateway 2>&1 | ForEach-Object { Write-Host $_ }
-          } catch {
-              Write-Warning "Gateway crashed: $_"
-              # Try fallback — start as background and keep alive
-              Start-Process -FilePath "hermes" -ArgumentList "gateway" -WorkingDirectory $h -NoNewWindow
-              Write-Host "Fallback: started as background process" -ForegroundColor Yellow
-              while ($true) {
-                  $procs = (Get-Process -Name "python*" -EA SilentlyContinue).Count
-                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Gateway processes: $procs"
-                  Start-Sleep 30
-              }
-          }
+      - name: Keep Alive
+        run: |
+          echo "Phantom Node is running!"
+          echo "Gateway PID: $(cat ~/.hermes/gateway.pid)"
+          echo "Tunnel PID: $(cat ~/.hermes/tunnel.pid)"
+          echo ""
+          echo "To stop: kill $(cat ~/.hermes/gateway.pid)"
+          echo ""
+          
+          # Keep alive loop - heartbeat every 5 minutes
+          while true; do
+            # Check gateway
+            if ! kill -0 $(cat ~/.hermes/gateway.pid) 2>/dev/null; then
+              echo "[$(date)] Gateway died, restarting..."
+              nohup hermes gateway > ~/.hermes/gateway.log 2>&1 &
+              echo $! > ~/.hermes/gateway.pid
+            fi
+            
+            # Check tunnel
+            if ! kill -0 $(cat ~/.hermes/tunnel.pid) 2>/dev/null; then
+              echo "[$(date)] Tunnel died, restarting..."
+              nohup cloudflared tunnel --url ssh://localhost:22 > ~/.hermes/tunnel.log 2>&1 &
+              echo $! > ~/.hermes/tunnel.pid
+            fi
+            
+            echo "[$(date)] Heartbeat - OK"
+            sleep 300
+          done
