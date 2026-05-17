@@ -1,20 +1,2 @@
-# Connection Info
-
-> This file is auto-updated by the deploy workflow
-
-## SSH Access
-
-```
-ssh runner@<tunnel-url>
+SSH: ssh runner@https://inventory-wearing-making-grass.trycloudflare.com
 Password: phantom123
-```
-
-## Telegram Bot
-
-Control via your Telegram bot
-
-## Status
-
-- Gateway: Pending deployment
-- Tunnel: Pending deployment
-- API: Xiaomi Mimo 2.5
