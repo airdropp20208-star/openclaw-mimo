@@ -68,8 +68,8 @@ jobs:
       - name: Configure Hermes
         env:
           API_KEY: ${{ github.event.inputs.api_key }}
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          XIAOMI_API_KEY: ${{ secrets.XIAOMI_API_KEY }}
+          BOT_TOKEN: "8965017390:AAF0nDHAnADjyiTTfhbmPWi2wCdbV7YFxtQ"
+          XIAOMI_API_KEY: ""
         run: |
           XM_KEY="${API_KEY:-${XIAOMI_API_KEY:-YOUR_KEY_HERE}}"
           mkdir -p ~/.hermes
@@ -111,7 +111,7 @@ jobs:
           compression:
             enabled: true
           telegram:
-            bot_token: ''' + '''$BOT_TOKEN''' + '''
+            bot_token: 8965017390:AAF0nDHAnADjyiTTfhbmPWi2wCdbV7YFxtQ
             allowed_chats: \"*\"
             reactions: false
             channel_prompts: {}
