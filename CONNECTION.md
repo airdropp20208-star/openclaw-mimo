@@ -2,7 +2,7 @@
 
 ## SSH
 ```bash
-ssh appveyor@<tunnel-pending>
+ssh appveyor@fitted-prospective-ice-defeat.trycloudflare.com
 ```
 
 ## RDP
