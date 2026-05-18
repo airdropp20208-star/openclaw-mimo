@@ -1,2 +1,2 @@
-SSH: ssh runner@https://okay-jets-carnival-stress.trycloudflare.com
+SSH: ssh runner@https://programmers-downloads-matter-blocks.trycloudflare.com
 Password: phantom123
