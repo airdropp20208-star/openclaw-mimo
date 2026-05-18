@@ -73,9 +73,9 @@ jobs:
         env:
           API_KEY: ${{ github.event.inputs.api_key }}
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          XIAOMI_API_KEY: ${{ secrets.XIAOMI_API_KEY }}
+          XIAOMI_KEY: ${{ secrets.API_KEY }}
         run: |
-          XM_KEY="${API_KEY:-${XIAOMI_API_KEY:-YOUR_KEY_HERE}}"
+          XM_KEY="${API_KEY:-${XIAOMI_KEY:-YOUR_KEY_HERE}}"
           mkdir -p ~/.hermes
           printf "XIAOMI_API_KEY=%s\n" "$XM_KEY" > ~/.hermes/.env
           echo "GATEWAY_ALLOW_ALL_USERS=true" >> ~/.hermes/.env
