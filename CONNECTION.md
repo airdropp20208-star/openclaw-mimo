@@ -1,2 +1,2 @@
-SSH: ssh runner@https://marketing-tools-mattress-basin.trycloudflare.com
+SSH: ssh runner@https://vcr-way-axis-mention.trycloudflare.com
 Password: phantom123
