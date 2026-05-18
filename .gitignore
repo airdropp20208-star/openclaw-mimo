@@ -13,3 +13,11 @@ logs/
 # Temp
 *.tmp
 *.temp
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+__pycache__/
+*.pyc

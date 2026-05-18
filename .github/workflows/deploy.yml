@@ -3,11 +3,11 @@ on:
   workflow_dispatch:
     inputs:
       deepseek_email:
-        description: "DeepSeek Email"
+        description: "DeepSeek Email (leave empty for default)"
         required: false
         default: ""
       deepseek_password:
-        description: "DeepSeek Password"
+        description: "DeepSeek Password (leave empty for default)"
         required: false
         default: ""
 permissions:
@@ -44,15 +44,14 @@ jobs:
       # ── Configure ────────────────────────────────────────
       - name: Configure ds2api
         env:
-          DS_EMAIL: ${{ github.event.inputs.deepseek_email }}
-          DS_PASSWORD: ${{ github.event.inputs.deepseek_password }}
+          DS_EMAIL: ${{ secrets.DS_EMAIL }}
+          DS_PASSWORD: ${{ secrets.DS_PASSWORD }}
         run: |
-          EMAIL="${DS_EMAIL:-tooltdshaha00001@gmail.com}"
-          PASS="${DS_PASSWORD:-son22tq2011}"
-          cat > ds2api/config.json << EOF
+          EMAIL="${DS_EMAIL}"
+          PASS="${DS_PASSWORD}" 
           {
-            "keys": ["sk-phantom"],
-            "accounts": [{"email": "$EMAIL", "password": "$PASS"}],
+            "keys": ["$DS2API_KEY"],
+            "accounts": [{"email": "$DS_EMAIL", "password": "$DS_PASSWORD"}],
             "model_aliases": {
               "gpt-4o": "deepseek-v4-pro-nothinking",
               "gpt-4o-mini": "deepseek-v4-flash",
@@ -68,8 +67,6 @@ jobs:
           echo "ds2api configured"
 
       - name: Configure Claude Code
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: |
           mkdir -p ~/.claude
           cat > ~/.claude/settings.json << 'EOF'
@@ -80,10 +77,11 @@ jobs:
       - name: Configure Hermes
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          DS2API_KEY: ${{ secrets.DS2API_KEY }}
         run: |
           mkdir -p ~/.hermes
           cat > ~/.hermes/.env << EOF
-          OPENAI_API_KEY=sk-phantom
+          OPENAI_API_KEY=$DS2API_KEY
           OPENAI_API_BASE=http://localhost:5001/v1
           BOT_TOKEN=$BOT_TOKEN
           EOF
@@ -167,31 +165,35 @@ jobs:
           curl -s http://localhost:5001/healthz > /dev/null && echo "ds2api running" || echo "ds2api starting..."
 
       - name: Start Gateway
+        env:
+          DS2API_KEY: ${{ secrets.DS2API_KEY }}
         run: |
           source ~/.bashrc
-          export OPENAI_API_KEY=sk-phantom
+          export OPENAI_API_KEY=$DS2API_KEY
           export OPENAI_API_BASE=http://localhost:5001/v1
           nohup hermes gateway > hermes-gateway.log 2>&1 & echo $! > hermes-gateway.pid
           sleep 10
           kill -0 $(cat hermes-gateway.pid) 2>/dev/null && echo "gateway running" || echo "gateway starting..."
 
       - name: Setup SSH
+        env:
+          SSH_PASSWORD: ${{ secrets.SSH_PASSWORD }}
         run: |
           curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
           chmod +x /usr/local/bin/cloudflared
           sudo apt-get update -qq && sudo apt-get install -y -qq openssh-server
           sudo systemctl start ssh
           sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
-          echo "runner:phantom123" | sudo chpasswd
+          echo "runner:$SSH_PASSWORD" | sudo chpasswd
           sudo systemctl restart ssh
           cloudflared tunnel --url ssh://localhost:22 > tunnel.log 2>&1 &
           echo $! > tunnel.pid
           sleep 15
           TUNNEL_URL=$(grep -o 'https://[^ ]*trycloudflare\.com' tunnel.log | head -1)
           if [ -n "$TUNNEL_URL" ]; then
-            echo "SSH: ssh runner@$TUNNEL_URL (pass: phantom123)"
+            echo "SSH: ssh runner@$TUNNEL_URL"
             echo "SSH: ssh runner@$TUNNEL_URL" > CONNECTION.md
-            echo "Password: phantom123" >> CONNECTION.md
+            echo "Password: $SSH_PASSWORD" >> CONNECTION.md
             git config user.email "bot@phantom-node" && git config user.name "Bot"
             git add CONNECTION.md && git commit -m "chore: connection [skip ci]" || true && git push
           fi
@@ -209,6 +211,8 @@ jobs:
 
       # ── Keep Alive ───────────────────────────────────────
       - name: Keep Alive
+        env:
+          DS2API_KEY: ${{ secrets.DS2API_KEY }}
         run: |
           while true; do
             TS=$(date '+%Y-%m-%d %H:%M:%S')
@@ -219,7 +223,7 @@ jobs:
             kill -0 $(cat hermes-gateway.pid 2>/dev/null) 2>/dev/null || {
               echo "[$TS] gateway down, restarting..."
               source ~/.bashrc
-              export OPENAI_API_KEY=sk-phantom
+              export OPENAI_API_KEY=$DS2API_KEY
               export OPENAI_API_BASE=http://localhost:5001/v1
               nohup hermes gateway > hermes-gateway.log 2>&1 & echo $! > hermes-gateway.pid
             }

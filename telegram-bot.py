@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
 Phantom Node - Telegram Bot
-Telegram → Open Interpreter → DeepSeek V4 (FREE via ds2api)
+Telegram → Claude Code → ds2api → DeepSeek V4 Pro (FREE)
 """
 import os
 import subprocess
 import json
 import logging
 import time
+import urllib.request
 
 # Config
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
@@ -77,14 +78,12 @@ def send_telegram(api: str, chat_id: int, text: str):
             url, data=data,
             headers={"Content-Type": "application/json"}
         ), timeout=10)
-    except:
+    except Exception:
         pass
 
 
 def main():
     """Telegram bot - long polling."""
-    import urllib.request
-
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN not set!")
         return
@@ -126,7 +125,7 @@ def main():
                         data=json.dumps({"chat_id": chat_id, "action": "typing"}).encode(),
                         headers={"Content-Type": "application/json"}
                     ), timeout=5)
-                except:
+                except Exception:
                     pass
 
                 # Call Claude Code
