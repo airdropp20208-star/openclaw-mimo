@@ -67,6 +67,8 @@ jobs:
           mkdir -p ~/.claude
           echo 'export ANTHROPIC_BASE_URL=http://localhost:20128/v1' >> ~/.bashrc
           echo 'export ANTHROPIC_API_KEY=sk-phantom' >> ~/.bashrc
+          # Auto-trust workspace for Claude Code
+          printf '{"permissions":{"allow":["Bash(*)","Read","Write","Edit"]}}\n' > ~/.claude/settings.json
           echo "claude configured"
 
       - name: Configure Hermes
@@ -101,6 +103,10 @@ jobs:
             backend: local
             timeout: 300
             persistent_shell: true
+            env_passthrough:
+            - ANTHROPIC_BASE_URL
+            - ANTHROPIC_API_KEY
+            - HOME
           display:
             personality: kawaii
             language: vi
@@ -135,8 +141,31 @@ jobs:
             - todo
             - vision
             - web
+            telegram:
+            - browser
+            - clarify
+            - code_execution
+            - cronjob
+            - delegation
+            - file
+            - memory
+            - session_search
+            - skills
+            - terminal
+            - todo
+            - vision
+            - web
           _config_version: 23
           CFGEOF
+          # Create CLAUDE.md that tells Hermes to delegate coding to Claude Code
+          cat > ~/.hermes/CLAUDE.md << 'CLAUDEOF'
+          You are Hermes Agent on a Phantom Node VPS.
+          When the user asks you to code, write, fix, or modify files and code, you MUST delegate to Claude Code using:
+          delegate_task(goal="task description", toolsets=["terminal", "file"], acp_command="claude", acp_args=["--acp", "--stdio"])
+          Claude Code has ANTHROPIC_BASE_URL=localhost:20128 and ANTHROPIC_API_KEY=sk-phantom.
+          Claude Code flows through 9router (20128) -> ds2api (5001) -> DeepSeek (FREE).
+          Always delegate coding tasks. Do NOT try to code yourself.
+          CLAUDEOF
           echo "hermes configured"
 
       - name: Start ds2api
@@ -154,6 +183,8 @@ jobs:
       - name: Start Gateway
         run: |
           source ~/.bashrc
+          export ANTHROPIC_BASE_URL=http://localhost:20128/v1
+          export ANTHROPIC_API_KEY=sk-phantom
           nohup hermes gateway > hermes-gateway.log 2>&1 & echo $! > hermes-gateway.pid
           sleep 10
           kill -0 $(cat hermes-gateway.pid) 2>/dev/null && echo "gateway running" || echo "gateway starting..."
@@ -205,6 +236,8 @@ jobs:
             if ! kill -0 $(cat hermes-gateway.pid 2>/dev/null) 2>/dev/null; then
               echo "[$TIMESTAMP] gateway down, restarting..."
               source ~/.bashrc
+              export ANTHROPIC_BASE_URL=http://localhost:20128/v1
+              export ANTHROPIC_API_KEY=sk-phantom
               nohup hermes gateway > hermes-gateway.log 2>&1 & echo $! > hermes-gateway.pid
             fi
             if ! kill -0 $(cat tunnel.pid 2>/dev/null) 2>/dev/null; then
