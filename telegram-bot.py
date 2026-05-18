@@ -14,7 +14,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 API_KEY = os.environ.get("API_KEY", "")
 API_BASE = os.environ.get("API_BASE", "https://api.xiaomimimo.com/v1")
 MODEL = os.environ.get("MODEL", "mimo-v2.5")
-ALLOWED_USERS = os.environ.get("ALLOWED_USERS", "")
+ALLOWED_CHATS = os.environ.get("ALLOWED_CHATS", "")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("phantom")
@@ -85,9 +85,9 @@ def main():
         log.error("BOT_TOKEN or API_KEY not set!")
         return
 
-    allowed = set(uid.strip() for uid in ALLOWED_USERS.split(",") if uid.strip())
+    allowed = set(int(cid.strip()) for cid in ALLOWED_CHATS.split(",") if cid.strip())
     log.info(f"Bot started! Model: {MODEL}")
-    log.info(f"Allowed users: {allowed or 'ALL'}")
+    log.info(f"Allowed chats: {allowed or 'ALL'}")
 
     # SKIP ALL OLD MESSAGES - get latest offset first
     log.info("Skipping old messages...")
@@ -121,7 +121,7 @@ def main():
                     continue
 
                 # Skip non-allowed users
-                if allowed and user_id not in allowed:
+                if allowed and chat_id not in allowed:
                     log.info(f"Blocked user {user_id}")
                     continue
 
