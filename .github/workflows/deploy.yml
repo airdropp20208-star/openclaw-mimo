@@ -19,10 +19,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
       - uses: actions/setup-python@v4
         with:
           python-version: '3.11'
@@ -34,11 +30,8 @@ jobs:
           chmod +x ds2api/ds2api && rm ds2api.tar.gz
           echo "ds2api OK"
 
-      - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code && echo "claude OK"
-
-      - name: Install Hermes
-        run: pip install hermes-agent && echo "hermes OK"
+      - name: Install Open Interpreter
+        run: pip install open-interpreter && echo "open-interpreter OK"
 
       - name: Configure ds2api
         env:
@@ -47,23 +40,8 @@ jobs:
         run: |
           EMAIL="${DS_EMAIL:-tooltdshaha00001@gmail.com}"
           PASS="${DS_PASSWORD:-son22tq2011}"
-          printf '{"keys":["sk-phantom"],"accounts":[{"email":"%s","password":"%s"}],"model_aliases":{"gpt-4o":"deepseek-v4-pro-nothinking","gpt-4o-mini":"deepseek-v4-flash","claude-sonnet-4-6":"deepseek-v4-pro-nothinking","claude-opus-4-6":"deepseek-v4-pro-nothinking"},"runtime":{"account_max_inflight":2,"token_refresh_interval_hours":6}}\n' "$EMAIL" "$PASS" > ds2api/config.json
+          printf '{"keys":["sk-phantom"],"accounts":[{"email":"%s","password":"%s"}],"model_aliases":{"gpt-4o":"deepseek-v4-pro-nothinking","gpt-4o-mini":"deepseek-v4-flash"},"runtime":{"account_max_inflight":2,"token_refresh_interval_hours":6}}\n' "$EMAIL" "$PASS" > ds2api/config.json
           echo "ds2api configured"
-
-      - name: Configure Claude Code
-        run: |
-          mkdir -p ~/.claude
-          printf '{"permissions":{"allow":["Bash(*)","Read","Write","Edit"]}}\n' > ~/.claude/settings.json
-          echo "claude configured"
-
-      - name: Configure Hermes
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-        run: |
-          mkdir -p ~/.hermes
-          printf "OPENAI_API_KEY=sk-phantom\nOPENAI_API_BASE=http://localhost:5001/v1\nBOT_TOKEN=%s\n" "$BOT_TOKEN" > ~/.hermes/.env
-          printf 'model:\n  default: deepseek-v4-pro-nothinking\n  provider: openai\n  base_url: http://localhost:5001/v1\nproviders: {}\nfallback_providers: []\ntoolsets:\n- hermes-cli\nagent:\n  max_turns: 90\n  gateway_timeout: 1800\n  api_max_retries: 3\n  tool_use_enforcement: auto\n  disabled_toolsets: []\nterminal:\n  backend: local\n  timeout: 300\n  persistent_shell: true\ndisplay:\n  personality: kawaii\n  language: vi\nsecurity:\n  allow_private_urls: true\n  redact_secrets: true\n  allow_lazy_installs: true\nmemory:\n  memory_enabled: true\n  user_profile_enabled: true\ncontext:\n  engine: compressor\ncompression:\n  enabled: true\ntelegram:\n  bot_token: "%s"\n  allowed_chats: "*"\n  reactions: false\n  channel_prompts: {}\nplatform_toolsets:\n  cli:\n  - browser\n  - clarify\n  - code_execution\n  - cronjob\n  - delegation\n  - file\n  - memory\n  - session_search\n  - skills\n  - terminal\n  - todo\n  - vision\n  - web\n  telegram:\n  - browser\n  - clarify\n  - code_execution\n  - cronjob\n  - delegation\n  - file\n  - memory\n  - session_search\n  - skills\n  - terminal\n  - todo\n  - vision\n  - web\n_config_version: 23\n' "$BOT_TOKEN" > ~/.hermes/config.yaml
-          echo "hermes configured"
 
       - name: Start ds2api
         run: |
@@ -71,14 +49,25 @@ jobs:
           sleep 5
           curl -s http://localhost:5001/healthz > /dev/null && echo "ds2api running" || echo "ds2api starting..."
 
-      - name: Start Gateway
+      - name: Test DeepSeek V4
         run: |
-          source ~/.bashrc
-          export OPENAI_API_KEY=sk-phantom
-          export OPENAI_API_BASE=http://localhost:5001/v1
-          nohup hermes gateway > hermes-gateway.log 2>&1 & echo $! > hermes-gateway.pid
-          sleep 10
-          kill -0 $(cat hermes-gateway.pid) 2>/dev/null && echo "gateway running" || echo "gateway starting..."
+          python3 -c "
+          import urllib.request, json
+          payload = json.dumps({'model':'deepseek-v4-pro-nothinking','messages':[{'role':'user','content':'Say hello'}],'max_tokens':50}).encode()
+          req = urllib.request.Request('http://localhost:5001/v1/chat/completions', data=payload, headers={'Content-Type':'application/json','Authorization':'Bearer sk-phantom'})
+          with urllib.request.urlopen(req, timeout=30) as r:
+              d = json.loads(r.read())
+              print('DeepSeek V4 OK:', d['choices'][0]['message']['content'][:100])
+          "
+
+      - name: Start Telegram Bot
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          DS2API_URL: "http://localhost:5001/v1"
+        run: |
+          nohup python3 telegram-bot.py > bot.log 2>&1 & echo $! > bot.pid
+          sleep 3
+          kill -0 $(cat bot.pid) 2>/dev/null && echo "bot running" || (echo "bot failed:" && cat bot.log)
 
       - name: Setup SSH
         run: |
@@ -105,11 +94,8 @@ jobs:
         run: |
           echo "=== Status ==="
           curl -s http://localhost:5001/healthz > /dev/null && echo "ds2api: OK" || echo "ds2api: FAIL"
-          command -v claude > /dev/null && echo "claude: OK" || echo "claude: FAIL"
-          command -v hermes > /dev/null && echo "hermes: OK" || echo "hermes: FAIL"
-          kill -0 $(cat hermes-gateway.pid 2>/dev/null) 2>/dev/null && echo "gateway: OK" || echo "gateway: FAIL"
-          echo "Model: deepseek-v4-pro-nothinking"
-          echo "Flow: Telegram -> Hermes -> Claude Code -> ds2api -> DeepSeek"
+          kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null && echo "bot: OK" || echo "bot: FAIL"
+          echo "Flow: Telegram → Bot → ds2api(:5001) → DeepSeek V4 (FREE)"
 
       - name: Keep Alive
         run: |
@@ -119,12 +105,11 @@ jobs:
               echo "[$TS] ds2api down, restarting..."
               cd ds2api && nohup ./ds2api > ../ds2api.log 2>&1 & echo $! > ../ds2api.pid && cd ..
             }
-            kill -0 $(cat hermes-gateway.pid 2>/dev/null) 2>/dev/null || {
-              echo "[$TS] gateway down, restarting..."
-              source ~/.bashrc
-              export OPENAI_API_KEY=sk-phantom
-              export OPENAI_API_BASE=http://localhost:5001/v1
-              nohup hermes gateway > hermes-gateway.log 2>&1 & echo $! > hermes-gateway.pid
+            kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null || {
+              echo "[$TS] bot down, restarting..."
+              export BOT_TOKEN="${{ secrets.BOT_TOKEN }}"
+              export DS2API_URL="http://localhost:5001/v1"
+              nohup python3 telegram-bot.py > bot.log 2>&1 & echo $! > bot.pid
             }
             kill -0 $(cat tunnel.pid 2>/dev/null) 2>/dev/null || {
               echo "[$TS] tunnel down, restarting..."

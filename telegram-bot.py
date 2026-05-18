@@ -1,108 +1,96 @@
 #!/usr/bin/env python3
 """
 Phantom Node - Telegram Bot
-Telegram → Claude Code → ds2api → DeepSeek V4 Pro (FREE)
+Telegram → Open Interpreter → DeepSeek V4 (via ds2api) → FREE
 """
 import os
-import subprocess
 import json
 import logging
 import time
+import threading
 import urllib.request
+import urllib.error
+from interpreter import interpreter
 
 # Config
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-ALLOWED_USERS = os.environ.get("ALLOWED_USERS", "").split(",")
-WORKDIR = os.environ.get("WORKDIR", os.path.expanduser("~"))
 DS2API_URL = os.environ.get("DS2API_URL", "http://localhost:5001/v1")
-DS2API_KEY = os.environ.get("DS2API_KEY", "sk-phantom")
+API_KEY = os.environ.get("API_KEY", "sk-phantom")
+MODEL = os.environ.get("MODEL", "deepseek-v4-pro-nothinking")
+ALLOWED_USERS = os.environ.get("ALLOWED_USERS", "")
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
-)
-logger = logging.getLogger("phantom-bot")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger("phantom")
+
+# Configure Open Interpreter to use ds2api
+interpreter.llm.model = f"openai/{MODEL}"
+interpreter.llm.api_key = API_KEY
+interpreter.llm.api_base = DS2API_URL
+interpreter.auto_run = True
+interpreter.safe_mode = "off"
+interpreter.system_message = """You are Phantom Node, a powerful AI coding assistant running on a GitHub Actions VPS.
+You can write and execute code, install packages, and perform system tasks.
+Be helpful, concise, and get things done efficiently.
+When the user asks you to code something, write and execute it directly."""
 
 
-def call_claude(message: str, timeout: int = 300) -> str:
-    """Call Claude Code CLI with DeepSeek backend."""
-    env = os.environ.copy()
-    env["ANTHROPIC_BASE_URL"] = DS2API_URL
-    env["ANTHROPIC_API_KEY"] = DS2API_KEY
-    env["HOME"] = os.path.expanduser("~")
-    env["PATH"] = "/usr/local/bin:/usr/bin:/bin:" + env.get("PATH", "")
+def tg_request(method, data=None, timeout=10):
+    """Telegram API request."""
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
+    req_data = json.dumps(data).encode() if data else None
+    req = urllib.request.Request(url, data=req_data)
+    if req_data:
+        req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read())
 
-    cmd = [
-        "claude", "-p", message,
-        "--output-format", "json",
-        "--max-turns", "20",
-        "--bare",
-    ]
 
+def chat_with_interpreter(message, history=None):
+    """Send message to Open Interpreter and get response."""
     try:
-        logger.info(f"Claude: {message[:80]}...")
-        result = subprocess.run(
-            cmd, capture_output=True, text=True,
-            timeout=timeout, cwd=WORKDIR, env=env,
-        )
-        logger.info(f"Exit: {result.returncode}")
+        # Build conversation for interpreter
+        messages = []
+        if history:
+            for msg in history[-10:]:  # last 10 messages
+                messages.append({"role": msg["role"], "type": "message", "content": msg["content"]})
 
-        if result.returncode != 0:
-            err = result.stderr[:500] if result.stderr else "No stderr"
-            return f"Error ({result.returncode}): {err}"
+        messages.append({"role": "user", "type": "message", "content": message})
 
-        try:
-            data = json.loads(result.stdout)
-            return data.get("result", result.stdout[:3000])
-        except json.JSONDecodeError:
-            return result.stdout[:3000] or "No response"
+        # Run interpreter
+        response_parts = []
+        for chunk in interpreter.chat(messages, stream=True, display=False):
+            if chunk.get("type") == "message" and chunk.get("role") == "assistant":
+                if chunk.get("content"):
+                    response_parts.append(chunk["content"])
 
-    except subprocess.TimeoutExpired:
-        return "Timeout"
-    except FileNotFoundError:
-        return "Error: claude not found"
+        return "\n".join(response_parts) if response_parts else "No response from interpreter."
+
     except Exception as e:
-        return f"Error: {str(e)[:200]}"
-
-
-def send_telegram(api: str, chat_id: int, text: str):
-    """Send message to Telegram."""
-    url = f"{api}/sendMessage"
-    data = json.dumps({
-        "chat_id": chat_id,
-        "text": text[:4000],
-    }).encode()
-    try:
-        urllib.request.urlopen(urllib.request.Request(
-            url, data=data,
-            headers={"Content-Type": "application/json"}
-        ), timeout=10)
-    except Exception:
-        pass
+        log.error(f"Interpreter error: {e}")
+        return f"Error: {str(e)[:500]}"
 
 
 def main():
-    """Telegram bot - long polling."""
     if not BOT_TOKEN:
-        logger.error("BOT_TOKEN not set!")
+        log.error("BOT_TOKEN not set!")
         return
 
-    API = f"https://api.telegram.org/bot{BOT_TOKEN}"
-    offset = 0
+    allowed = set(uid.strip() for uid in ALLOWED_USERS.split(",") if uid.strip())
+    log.info(f"Bot started! Model: {MODEL}")
+    log.info(f"ds2api: {DS2API_URL}")
+    log.info(f"Open Interpreter: configured")
+    log.info(f"Allowed users: {allowed or 'ALL'}")
 
-    logger.info("Phantom Bot started!")
-    logger.info(f"DS2API: {DS2API_URL}")
+    offset = 0
+    history = {}  # Per-user conversation history
 
     while True:
         try:
-            url = f"{API}/getUpdates?offset={offset}&timeout=30"
-            with urllib.request.urlopen(url, timeout=35) as resp:
-                data = json.loads(resp.read())
+            result = tg_request("getUpdates", {"offset": offset, "timeout": 30}, timeout=35)
 
-            for update in data.get("result", []):
+            for update in result.get("result", []):
                 offset = update["update_id"] + 1
-                msg = update.get("message", {})
+                msg = update.get("message")
                 if not msg:
                     continue
 
@@ -110,33 +98,64 @@ def main():
                 user_id = str(msg.get("from", {}).get("id", ""))
                 text = msg.get("text", "")
 
-                if ALLOWED_USERS != [""] and user_id not in ALLOWED_USERS:
-                    continue
-
                 if not text:
                     continue
 
-                logger.info(f"[{user_id}] {text[:100]}")
+                # Access control
+                if allowed and user_id not in allowed:
+                    log.info(f"Blocked user {user_id}")
+                    continue
+
+                log.info(f"[{user_id}] {text[:100]}")
 
                 # Typing indicator
                 try:
-                    urllib.request.urlopen(urllib.request.Request(
-                        f"{API}/sendChatAction",
-                        data=json.dumps({"chat_id": chat_id, "action": "typing"}).encode(),
-                        headers={"Content-Type": "application/json"}
-                    ), timeout=5)
+                    tg_request("sendChatAction", {"chat_id": chat_id, "action": "typing"})
                 except Exception:
                     pass
 
-                # Call Claude Code
-                response = call_claude(text)
-                send_telegram(API, chat_id, response)
-                logger.info(f"Replied to {chat_id}")
+                # Handle /clear command
+                if text.lower() in ("/clear", "/reset"):
+                    history.pop(chat_id, None)
+                    tg_request("sendMessage", {"chat_id": chat_id, "text": "Memory cleared."})
+                    continue
+
+                # Handle /status command
+                if text.lower() == "/status":
+                    status = f"""*Phantom Node Status*
+Model: `{MODEL}`
+API: `{DS2API_URL}`
+History: {len(history.get(chat_id, []))} messages"""
+                    tg_request("sendMessage", {"chat_id": chat_id, "text": status, "parse_mode": "Markdown"})
+                    continue
+
+                # Build history
+                if chat_id not in history:
+                    history[chat_id] = []
+                history[chat_id].append({"role": "user", "content": text})
+
+                # Call Open Interpreter
+                response = chat_with_interpreter(text, history[chat_id])
+                history[chat_id].append({"role": "assistant", "content": response})
+
+                # Trim history
+                if len(history[chat_id]) > 20:
+                    history[chat_id] = history[chat_id][-20:]
+
+                # Send reply (split if > 4096 chars)
+                for i in range(0, len(response), 4096):
+                    chunk = response[i:i+4096]
+                    try:
+                        tg_request("sendMessage", {"chat_id": chat_id, "text": chunk})
+                    except Exception as e:
+                        log.error(f"Send failed: {e}")
+
+                log.info(f"Replied to {chat_id} ({len(response)} chars)")
 
         except KeyboardInterrupt:
             break
         except Exception as e:
-            logger.error(f"Error: {e}")
+            log.error(f"Poll error: {e}")
             time.sleep(5)
 
 
