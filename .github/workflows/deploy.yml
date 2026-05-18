@@ -27,18 +27,21 @@ jobs:
         with:
           python-version: '3.11'
 
+      # ── Install ──────────────────────────────────────────
       - name: Install ds2api
         run: |
           curl -L -o ds2api.tar.gz "https://github.com/CJackHwang/ds2api/releases/download/v4.6.1/ds2api_v4.6.1_linux_amd64.tar.gz"
-          tar -xzf ds2api.tar.gz && mv ds2api_v4.6.1_linux_amd64 ds2api && chmod +x ds2api/ds2api && rm ds2api.tar.gz
+          tar -xzf ds2api.tar.gz && mv ds2api_v4.6.1_linux_amd64 ds2api
+          chmod +x ds2api/ds2api && rm ds2api.tar.gz
           echo "ds2api OK"
 
-      - name: Install Open Interpreter
-        run: pip install open-interpreter && echo "interpreter OK"
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code && echo "claude OK"
 
       - name: Install Hermes
         run: pip install hermes-agent && echo "hermes OK"
 
+      # ── Configure ────────────────────────────────────────
       - name: Configure ds2api
         env:
           DS_EMAIL: ${{ github.event.inputs.deepseek_email }}
@@ -46,23 +49,48 @@ jobs:
         run: |
           EMAIL="${DS_EMAIL:-tooltdshaha00001@gmail.com}"
           PASS="${DS_PASSWORD:-son22tq2011}"
-          printf '{"keys":["sk-phantom"],"accounts":[{"email":"%s","password":"%s"}],"model_aliases":{"gpt-4o":"deepseek-v4-flash","gpt-4o-mini":"deepseek-v4-flash","claude-sonnet-4-6":"deepseek-v4-flash","claude-opus-4-6":"deepseek-v4-pro"},"runtime":{"account_max_inflight":2,"token_refresh_interval_hours":6}}\n' "$EMAIL" "$PASS" > ds2api/config.json
+          cat > ds2api/config.json << EOF
+          {
+            "keys": ["sk-phantom"],
+            "accounts": [{"email": "$EMAIL", "password": "$PASS"}],
+            "model_aliases": {
+              "gpt-4o": "deepseek-v4-pro-nothinking",
+              "gpt-4o-mini": "deepseek-v4-flash",
+              "claude-sonnet-4-6": "deepseek-v4-pro-nothinking",
+              "claude-opus-4-6": "deepseek-v4-pro-nothinking"
+            },
+            "runtime": {
+              "account_max_inflight": 2,
+              "token_refresh_interval_hours": 6
+            }
+          }
+          EOF
           echo "ds2api configured"
+
+      - name: Configure Claude Code
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        run: |
+          mkdir -p ~/.claude
+          cat > ~/.claude/settings.json << 'EOF'
+          {"permissions":{"allow":["Bash(*)","Read","Write","Edit"]}}
+          EOF
+          echo "claude configured"
 
       - name: Configure Hermes
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: |
           mkdir -p ~/.hermes
-          cat > ~/.hermes/.env << ENVEOF
+          cat > ~/.hermes/.env << EOF
           OPENAI_API_KEY=sk-phantom
           OPENAI_API_BASE=http://localhost:5001/v1
           BOT_TOKEN=$BOT_TOKEN
-          ENVEOF
+          EOF
 
-          cat > ~/.hermes/config.yaml << CFGEOF
+          cat > ~/.hermes/config.yaml << EOF
           model:
-            default: deepseek-v4-flash
+            default: deepseek-v4-pro-nothinking
             provider: openai
             base_url: http://localhost:5001/v1
           providers: {}
@@ -128,23 +156,21 @@ jobs:
             - vision
             - web
           _config_version: 23
-          CFGEOF
+          EOF
           echo "hermes configured"
 
-      - name: Configure Open Interpreter
-        run: |
-          mkdir -p ~/.open-interpreter
-          echo "interpreter configured"
-
+      # ── Start Services ───────────────────────────────────
       - name: Start ds2api
         run: |
           cd ds2api && nohup ./ds2api > ../ds2api.log 2>&1 & echo $! > ../ds2api.pid && cd ..
           sleep 5
           curl -s http://localhost:5001/healthz > /dev/null && echo "ds2api running" || echo "ds2api starting..."
 
-      - name: Start Hermes Gateway
+      - name: Start Gateway
         run: |
           source ~/.bashrc
+          export OPENAI_API_KEY=sk-phantom
+          export OPENAI_API_BASE=http://localhost:5001/v1
           nohup hermes gateway > hermes-gateway.log 2>&1 & echo $! > hermes-gateway.pid
           sleep 10
           kill -0 $(cat hermes-gateway.pid) 2>/dev/null && echo "gateway running" || echo "gateway starting..."
@@ -168,34 +194,38 @@ jobs:
             echo "Password: phantom123" >> CONNECTION.md
             git config user.email "bot@phantom-node" && git config user.name "Bot"
             git add CONNECTION.md && git commit -m "chore: connection [skip ci]" || true && git push
-          else
-            echo "tunnel starting..."
           fi
 
+      # ── Verify ───────────────────────────────────────────
       - name: Verify
         run: |
           echo "=== Status ==="
           curl -s http://localhost:5001/healthz > /dev/null && echo "ds2api: OK" || echo "ds2api: FAIL"
+          command -v claude > /dev/null && echo "claude: OK" || echo "claude: FAIL"
           command -v hermes > /dev/null && echo "hermes: OK" || echo "hermes: FAIL"
-          command -v interpreter > /dev/null && echo "interpreter: OK" || echo "interpreter: FAIL"
           kill -0 $(cat hermes-gateway.pid 2>/dev/null) 2>/dev/null && echo "gateway: OK" || echo "gateway: FAIL"
-          echo "Flow: Telegram -> Hermes -> DeepSeek V4 -> Open Interpreter"
+          echo "Model: deepseek-v4-pro-nothinking"
+          echo "Flow: Telegram -> Hermes -> Claude Code -> ds2api -> DeepSeek"
 
+      # ── Keep Alive ───────────────────────────────────────
       - name: Keep Alive
         run: |
           while true; do
-            TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
-            if ! curl -s http://localhost:5001/healthz > /dev/null 2>&1; then
-              echo "[$TIMESTAMP] ds2api down, restarting..."
+            TS=$(date '+%Y-%m-%d %H:%M:%S')
+            curl -s http://localhost:5001/healthz > /dev/null 2>&1 || {
+              echo "[$TS] ds2api down, restarting..."
               cd ds2api && nohup ./ds2api > ../ds2api.log 2>&1 & echo $! > ../ds2api.pid && cd ..
-            fi
-            if ! kill -0 $(cat hermes-gateway.pid 2>/dev/null) 2>/dev/null; then
-              echo "[$TIMESTAMP] gateway down, restarting..."
+            }
+            kill -0 $(cat hermes-gateway.pid 2>/dev/null) 2>/dev/null || {
+              echo "[$TS] gateway down, restarting..."
+              source ~/.bashrc
+              export OPENAI_API_KEY=sk-phantom
+              export OPENAI_API_BASE=http://localhost:5001/v1
               nohup hermes gateway > hermes-gateway.log 2>&1 & echo $! > hermes-gateway.pid
-            fi
-            if ! kill -0 $(cat tunnel.pid 2>/dev/null) 2>/dev/null; then
-              echo "[$TIMESTAMP] tunnel down, restarting..."
+            }
+            kill -0 $(cat tunnel.pid 2>/dev/null) 2>/dev/null || {
+              echo "[$TS] tunnel down, restarting..."
               nohup cloudflared tunnel --url ssh://localhost:22 > tunnel.log 2>&1 & echo $! > tunnel.pid
-            fi
+            }
             sleep 300
           done

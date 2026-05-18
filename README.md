@@ -1,194 +1,97 @@
-# Phantom Node
+<p align="center">
+  <img src="https://img.shields.io/badge/PHANTOM%20NODE-v7.0-purple?style=for-the-badge&labelColor=black" />
+  <img src="https://img.shields.io/badge/DEEPSEEK%20V4-PRO-brightgreen?style=for-the-badge&labelColor=black" />
+  <img src="https://img.shields.io/badge/STATUS-FREE-yellow?style=for-the-badge&labelColor=black" />
+</p>
 
-> Free AI environment: Claude Code + DeepSeek via GitHub Actions
+<h1 align="center"> phantom-node </h1>
 
-## What is this?
+<p align="center">
+  <b>⚡ Telegram → Hermes → DeepSeek V4 Pro → Code Execution ⚡</b><br>
+  <sub>Your free VPS for 6 hours — DeepSeek V4 Pro via ds2api (FREE!)</sub>
+</p>
 
-A free AI coding environment powered by GitHub Actions:
+---
 
-```
-Claude Code → 9router → ds2api → DeepSeek (FREE!)
-```
+## 🔥 What is this?
 
-- **Claude Code** - AI coding assistant
-- **DeepSeek** - Free AI model (V4 Flash/Pro)
-- **9router** - Smart AI router with token savings
-- **ds2api** - DeepSeek to API converter
-- **Hermes Agent** - Telegram bot control
-- **SSH Access** - Via Cloudflare tunnel
+**Phantom Node** turns GitHub Actions into a **free DeepSeek V4 Pro environment** with:
 
-## Quick Start (3 minutes)
+- **ds2api** — DeepSeek Web → OpenAI API gateway
+- **Claude Code** — AI coding assistant (uses DeepSeek as backend)
+- **Hermes** — Telegram bot + agent
+- **Self-healing** — Auto-restarts crashed services
+- **Zero cost** — Runs on GitHub Actions free tier
 
-### 1. Fork this repo
-
-### 2. Add Secrets
-
-Go to **Settings → Secrets and variables → Actions**:
-
-| Secret | Description | Required |
-|--------|-------------|----------|
-| `BOT_TOKEN` | Telegram bot token from @BotFather | Yes |
-| `XIAOMI_API_KEY` | Your Mimo API key | Optional |
-
-### 3. Run Workflow
-
-Go to **Actions → Deploy → Run workflow**
-
-Optional inputs:
-- `api_key` - Override Mimo API key
-- `deepseek_email` - DeepSeek account email
-- `deepseek_password` - DeepSeek account password
-
-### 4. Connect
-
-**SSH Access:**
-```bash
-ssh runner@<tunnel-url>
-Password: phantom123
-```
-
-**Use Claude Code:**
-```bash
-# SSH into the runner
-ssh runner@<tunnel-url>
-
-# Use Claude Code (routed through DeepSeek)
-claude "write a Python script to scrape websites"
-```
-
-**Telegram Bot:**
-Just message your bot on Telegram!
-
-## Architecture
+## ⚡ Architecture
 
 ```
 ┌─────────────────────────────────────────────────┐
-│           GitHub Actions Runner (Ubuntu)         │
-│                                                  │
-│  ┌──────────────────────────────────────────┐   │
-│  │         Claude Code CLI                  │   │
-│  │    (AI coding assistant)                 │   │
-│  └───────────────┬──────────────────────────┘   │
-│                  │                              │
-│                  ▼                              │
-│  ┌──────────────────────────────────────────┐   │
-│  │         9router (port 20128)             │   │
-│  │    Smart AI router + RTK token saver     │   │
-│  └───────────────┬──────────────────────────┘   │
-│                  │                              │
-│                  ▼                              │
-│  ┌──────────────────────────────────────────┐   │
-│  │         ds2api (port 5001)               │   │
-│  │    DeepSeek Web → OpenAI API             │   │
-│  └───────────────┬──────────────────────────┘   │
-│                  │                              │
-│                  ▼                              │
-│  ┌──────────────────────────────────────────┐   │
-│  │         DeepSeek API                     │   │
-│  │    (Free V4 Flash/Pro models)            │   │
-│  └──────────────────────────────────────────┘   │
-│                                                  │
-│  ┌──────────────────────────────────────────┐   │
-│  │         Hermes Gateway                   │   │
-│  │    Telegram bot + CLI tools              │   │
-│  └──────────────────────────────────────────┘   │
-│                                                  │
-│  ┌──────────────────────────────────────────┐   │
-│  │         Cloudflare Tunnel                │   │
-│  │    SSH access from anywhere              │   │
-│  └──────────────────────────────────────────┘   │
+│                    Telegram                      │
+└───────────────────┬─────────────────────────────┘
+                    │
+                    ▼
+┌─────────────────────────────────────────────────┐
+│              Hermes Gateway                      │
+│     (Routes messages to Claude Code)             │
+└───────────────────┬─────────────────────────────┘
+                    │
+                    ▼
+┌─────────────────────────────────────────────────┐
+│              Claude Code CLI                     │
+│         (AI coding assistant)                    │
+└───────────────────┬─────────────────────────────┘
+                    │
+                    ▼
+┌─────────────────────────────────────────────────┐
+│              ds2api (5001)                       │
+│       (DeepSeek Web → OpenAI API)                │
+└───────────────────┬─────────────────────────────┘
+                    │
+                    ▼
+┌─────────────────────────────────────────────────┐
+│              DeepSeek V4 Pro (FREE!)             │
 └─────────────────────────────────────────────────┘
 ```
 
-## Services Running
+## 🚀 Quick Start
 
-| Service | Port | Description |
-|---------|------|-------------|
-| ds2api | 5001 | DeepSeek API converter |
-| 9router | 20128 | AI router + dashboard |
-| Claude Code | - | Via 9router |
-| Hermes | - | Telegram bot |
-| SSH | 22 | Via Cloudflare tunnel |
+### 1. Fork this repo
 
-## Usage Examples
+### 2. Add GitHub Secrets
 
-**Claude Code (via SSH):**
-```bash
-ssh runner@<tunnel-url>
-# Password: phantom123
+- `BOT_TOKEN` — Telegram bot token
+- `DS_EMAIL` — DeepSeek email (optional, has defaults)
+- `DS_PASSWORD` — DeepSeek password (optional, has defaults)
 
-# Use Claude Code
-claude "create a REST API with FastAPI"
-claude "debug this Python code"
-claude "write tests for my project"
-```
+### 3. Trigger workflow
 
-**Telegram Bot:**
-```
-/help - Show commands
-/run python script.py - Execute code
-/search something - Web search
-/read file.txt - Read files
-```
+Go to Actions → Deploy Phantom Node → Run workflow
 
-**9router Dashboard:**
-- Open http://localhost:20128/dashboard
-- View token usage
-- Configure providers
-- Monitor requests
+### 4. Chat on Telegram
 
-## Features
+Message your bot on Telegram. It uses DeepSeek V4 Pro for FREE!
 
-- **Free** - GitHub Actions provides 2,000 minutes/month
-- **Full environment** - Python, Node.js, Docker, Git
-- **Claude Code** - AI coding with DeepSeek backend
-- **Token savings** - RTK saves 20-40% tokens
-- **Auto-recovery** - Services restart if they crash
-- **6-hour sessions** - Maximum GitHub Actions timeout
+## 📊 Services
 
-## DeepSeek Models
+| Service | Port | Purpose |
+|---------|------|---------|
+| ds2api | `:5001` | DeepSeek → OpenAI API |
+| Hermes | - | Telegram gateway |
+| Claude Code | - | AI coding agent |
 
-| Model | Alias | Thinking |
-|-------|-------|----------|
-| deepseek-v4-flash | claude-sonnet-4-6 | ✅ |
-| deepseek-v4-pro | claude-opus-4-6 | ✅ |
-| deepseek-v4-flash-nothinking | - | ❌ |
-| deepseek-v4-pro-nothinking | - | ❌ |
+## 🛡️ Features
 
-## Limitations
+| Feature | Status |
+|---------|--------|
+| DeepSeek V4 Pro (FREE) | ✅ |
+| OpenAI API compat | ✅ |
+| Telegram bot | ✅ |
+| Claude Code integration | ✅ |
+| Self-healing | ✅ |
+| SSH tunnel | ✅ |
+| Auto-recovery | ✅ |
 
-- **6-hour max** - GitHub Actions jobs timeout
-- **No persistence** - Data lost when job ends
-- **Rate limits** - GitHub API limits apply
+## 📜 License
 
-## Troubleshooting
-
-**Claude Code not working:**
-```bash
-# Check services
-curl http://localhost:5001/healthz  # ds2api
-curl http://localhost:20128          # 9router
-
-# Check config
-cat ~/.claude/config.json
-echo $ANTHROPIC_BASE_URL
-```
-
-**Services crashed:**
-- They auto-restart within 5 minutes
-- Check logs: `cat ds2api.log 9router.log hermes-gateway.log`
-
-**SSH not working:**
-- Wait 1-2 minutes for tunnel
-- Check CONNECTION.md for updated URL
-
-## Credits
-
-- [ds2api](https://github.com/CJackHwang/ds2api) - DeepSeek to API
-- [9router](https://github.com/decolua/9router) - AI router
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) - AI coding
-- [Hermes Agent](https://github.com/NousResearch/hermes-agent) - Agent framework
-
-## License
-
-MIT
+MIT License
