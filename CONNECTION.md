@@ -1,2 +1,2 @@
-SSH: ssh runner@https://folks-ivory-bosnia-portable.trycloudflare.com (pass: phantom123)
+SSH: ssh runner@https://expansion-relying-drilling-conditioning.trycloudflare.com (pass: phantom123)
 Password: phantom123
