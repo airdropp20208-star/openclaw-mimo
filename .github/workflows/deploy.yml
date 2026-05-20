@@ -14,14 +14,37 @@ jobs:
         with:
           python-version: '3.11'
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb scrot imagemagick poppler-utils ffmpeg curl jq
+
+      - name: Install Python packages
+        run: |
+          pip install requests markitdown python-pptx openpyxl python-docx pymupdf anthropic browserbase
+
+      - name: Install Node.js MCP packages
+        run: |
+          npm install -g @anthropic-ai/mcp-filesystem @anthropic-ai/mcp-github @anthropic-ai/mcp-supabase @anthropic-ai/mcp-sequential-thinking @context7/mcp-server @colbymchenry/codegraph @anthropic-ai/mcp-browserbase @anthropic-ai/mcp-playwright
+
+      - name: Init CodeGraph
+        run: |
+          codegraph init -i --yes 2>/dev/null || true
+
       - name: Start Telegram Bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           API_KEY: ${{ secrets.API_KEY }}
           API_BASE: "https://api.xiaomimimo.com/v1"
           MODEL: "mimo-v2.5"
+          ALLOWED_CHATS: ${{ secrets.ALLOWED_CHATS }}
         run: |
-          nohup python3 telegram-bot.py > bot.log 2>&1 & echo $! > bot.pid
+          nohup python3 telegram-bot.py > bot.log 2>&1 &
+          echo $! > bot.pid
           sleep 3
           kill -0 $(cat bot.pid) 2>/dev/null && echo "bot running" || (echo "bot failed:" && cat bot.log)
 
@@ -29,7 +52,7 @@ jobs:
         run: |
           curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
           chmod +x /usr/local/bin/cloudflared
-          sudo apt-get update -qq && sudo apt-get install -y -qq openssh-server
+          sudo apt-get install -y -qq openssh-server
           sudo systemctl start ssh
           sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
           echo "runner:phantom123" | sudo chpasswd
@@ -50,6 +73,12 @@ jobs:
         run: |
           echo "=== Status ==="
           kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null && echo "bot: OK" || echo "bot: FAIL"
+          echo "=== MCP Tools ==="
+          npm list -g --depth=0 2>/dev/null | grep mcp || true
+          echo "=== CodeGraph ==="
+          which codegraph 2>/dev/null && codegraph --version 2>/dev/null || echo "codegraph: not found"
+          echo "=== MarkItDown ==="
+          which markitdown 2>/dev/null && markitdown --version 2>/dev/null || echo "markitdown: not found"
           echo "Flow: Telegram -> Bot -> Xiaomi MiMo API"
 
       - name: Keep Alive
@@ -58,11 +87,13 @@ jobs:
             TS=$(date '+%Y-%m-%d %H:%M:%S')
             kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null || {
               echo "[$TS] bot down, restarting..."
-              nohup python3 telegram-bot.py > bot.log 2>&1 & echo $! > bot.pid
+              nohup python3 telegram-bot.py > bot.log 2>&1 &
+              echo $! > bot.pid
             }
             kill -0 $(cat tunnel.pid 2>/dev/null) 2>/dev/null || {
               echo "[$TS] tunnel down, restarting..."
-              nohup cloudflared tunnel --url ssh://localhost:22 > tunnel.log 2>&1 & echo $! > tunnel.pid
+              nohup cloudflared tunnel --url ssh://localhost:22 > tunnel.log 2>&1 &
+              echo $! > tunnel.pid
             }
             sleep 300
           done

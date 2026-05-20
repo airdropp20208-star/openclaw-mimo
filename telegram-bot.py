@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Phantom Node v7 - Self-healing bot
-Auto-detect errors, find solutions, fix and retry
+PhantomBot v8 - AI Agent with MCP tools
+Features: Smart execution, file handling, web search, image gen, MCP tools, memory
 """
-import os, json, logging, time, subprocess, urllib.request, urllib.error
+import os, json, logging, time, subprocess, urllib.request, urllib.error, urllib.parse, hashlib, re
+from datetime import datetime
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 API_KEY = os.environ.get("API_KEY", "")
@@ -14,13 +15,11 @@ ALLOWED_CHATS = os.environ.get("ALLOWED_CHATS", "")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("phantom")
 
-SYSTEM_PROMPT = """You are PhantomBot. When something fails:
-1. Analyze the error message
-2. Identify what is missing (package, file, permission)
-3. Fix it automatically
-4. Retry the task
-Reply 1-2 sentences. No markdown."""
+SYSTEM_PROMPT = """You are PhantomBot v8 — an AI assistant with access to a VPS.
+You can execute shell commands, browse the web, convert files, generate images, and use MCP tools.
+Reply in the user's language. Be concise. Use markdown when helpful."""
 
+MEMORY_FILE = "/tmp/phantom_memory.json"
 last_response = {}
 RATE_LIMIT = 2
 
@@ -36,24 +35,23 @@ def run(cmd, timeout=60):
         return str(e)[:200]
 
 
+def ai_chat(messages, max_tokens=800, temperature=0.3):
+    payload = json.dumps({"model": MODEL, "messages": messages, "max_tokens": max_tokens, "temperature": temperature}).encode()
+    req = urllib.request.Request(f"{API_BASE}/chat/completions", data=payload,
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {API_KEY}"})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.loads(resp.read())
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        log.error(f"API error: {e}")
+        return "API error"
+
+
 def ai_plan(prompt):
-    """Ask AI for a JSON plan"""
-    payload = json.dumps({
-        "model": MODEL,
-        "messages": [
-            {"role": "system", "content": "Reply only with valid JSON, no extra text."},
-            {"role": "user", "content": prompt}
-        ],
-        "max_tokens": 250,
-        "temperature": 0.1,
-    }).encode()
-    req = urllib.request.Request(
-        f"{API_BASE}/chat/completions", data=payload,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {API_KEY}"},
-    )
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        data = json.loads(resp.read())
-    content = data["choices"][0]["message"]["content"].strip()
+    messages = [{"role": "system", "content": "Reply only with valid JSON, no extra text."},
+                {"role": "user", "content": prompt}]
+    content = ai_chat(messages, max_tokens=250, temperature=0.1)
     for sep in ["```json", "```"]:
         if sep in content:
             content = content.split(sep)[1].split("```")[0].strip()
@@ -61,16 +59,13 @@ def ai_plan(prompt):
 
 
 def smart_execute(task):
-    """Execute task with auto-repair: detect errors, fix, retry"""
-    # Step 1: Get command from AI
     try:
         plan = ai_plan(
             f'User wants: {task}\n'
-            'Reply JSON: {{"cmd":"shell command","needs":["pkg"],"fix_cmd":"apt-get install -y pkg"}}\n'
+            'Reply JSON: {"cmd":"shell command","needs":[],"fix_cmd":""}\n'
             'If no packages needed, needs=[], fix_cmd="".'
         )
     except Exception as e:
-        log.error(f"AI plan failed: {e}")
         return run(task)
 
     cmd = plan.get("cmd", task)
@@ -78,64 +73,82 @@ def smart_execute(task):
     fix_cmd = plan.get("fix_cmd", "")
 
     parts = []
-
-    # Step 2: Install missing
     if needs and fix_cmd:
         parts.append(f"Installing: {', '.join(needs)}")
-        inst = run(fix_cmd, timeout=120)
-        parts.append(inst[:200])
+        parts.append(run(fix_cmd, timeout=120)[:200])
 
-    # Step 3: Execute
     parts.append(f"$ {cmd}")
     output = run(cmd)
-
-    # Step 4: Check errors and auto-fix
     errors = ["not found", "No such file", "Permission denied", "command not found",
-              "ModuleNotFoundError", "ImportError", "Unable to locate", "error:"]
-    has_err = any(e.lower() in output.lower() for e in errors)
-
-    if has_err:
+              "ModuleNotFoundError", "ImportError", "Unable to locate"]
+    if any(e.lower() in output.lower() for e in errors):
         parts.append("Error detected, auto-fixing...")
         try:
             fix = ai_plan(
                 f"Command failed:\n$ {cmd}\nError: {output[:500]}\n"
-                'Reply JSON: {{"diagnosis":"what went wrong","fix_cmd":"fix command","retry_cmd":"retry command"}}'
+                'Reply JSON: {"fix_cmd":"fix command","retry_cmd":"retry command"}'
             )
-            diag = fix.get("diagnosis", "")
             fc = fix.get("fix_cmd", "")
             rc = fix.get("retry_cmd", cmd)
-            if diag:
-                parts.append(f"Diagnosis: {diag}")
             if fc:
                 parts.append(f"Fixing: {fc}")
                 run(fc, timeout=120)
-            parts.append(f"Retrying: {rc}")
-            retry_out = run(rc)
-            parts.append(retry_out)
-        except Exception as e:
-            parts.append(f"Auto-fix failed: {str(e)[:100]}")
+            parts.append(run(rc))
+        except:
+            pass
     else:
         parts.append(output)
 
     return "\n".join(parts)
 
 
-def api_chat(message, history=None):
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    if history:
-        messages.extend(history[-6:])
-    messages.append({"role": "user", "content": message})
-    payload = json.dumps({"model": MODEL, "messages": messages, "max_tokens": 300, "temperature": 0.2}).encode()
-    req = urllib.request.Request(f"{API_BASE}/chat/completions", data=payload,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {API_KEY}"})
+def load_memory():
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            data = json.loads(resp.read())
-        c = data["choices"][0]["message"]["content"]
-        return c.strip()[:800] if c else "No response"
+        with open(MEMORY_FILE) as f:
+            return json.load(f)
+    except:
+        return {}
+
+
+def save_memory(data):
+    with open(MEMORY_FILE, "w") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def browse_url(url):
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+        text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL)
+        text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text[:4000]
     except Exception as e:
-        log.error(f"API error: {e}")
-        return "API error"
+        return f"Error: {e}"
+
+
+def convert_file(file_path, target_fmt):
+    ext = os.path.splitext(file_path)[1].lower()
+    out = f"/tmp/converted_{int(time.time())}{target_fmt}"
+    converters = {
+        (".pdf", ".md"): f"markitdown {file_path} > {out}",
+        (".docx", ".md"): f"markitdown {file_path} > {out}",
+        (".pptx", ".md"): f"markitdown {file_path} > {out}",
+        (".xlsx", ".md"): f"markitdown {file_path} > {out}",
+        (".mp4", ".mp3"): f"ffmpeg -i {file_path} -q:a 0 -map a {out} -y",
+        (".mp4", ".gif"): f"ffmpeg -i {file_path} -vf fps=10,scale=480:-1 {out} -y",
+        (".png", ".jpg"): f"convert {file_path} {out}",
+        (".jpg", ".png"): f"convert {file_path} {out}",
+    }
+    cmd = converters.get((ext, target_fmt))
+    if not cmd:
+        return None
+    output = run(cmd, timeout=120)
+    if os.path.exists(out):
+        return out
+    return f"Convert failed: {output}"
 
 
 def tg(method, data=None, timeout=10):
@@ -150,7 +163,7 @@ def tg(method, data=None, timeout=10):
 
 def tg_upload(file_path, chat_id, caption=""):
     import mimetypes
-    boundary = "----PhantomBoundary7MA4"
+    boundary = "----PhantomBoundary8"
     fname = os.path.basename(file_path)
     mime = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
     with open(file_path, "rb") as f:
@@ -192,9 +205,114 @@ def handle_doc(chat_id, doc):
         url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{fp}"
         local = f"/tmp/{fname}"
         urllib.request.urlretrieve(url, local)
-        send(chat_id, f"Nhan: {fname} ({fsize} bytes)\n{local}")
+        send(chat_id, f"Da nhan: {fname} ({fsize} bytes)\nLuu: {local}")
     except Exception as e:
         send(chat_id, f"Loi: {str(e)[:100]}")
+
+
+def handle_convert(chat_id, text):
+    parts = text.split()
+    if len(parts) < 3:
+        send(chat_id, "Usage: /convert <file_path> <format>\nExample: /convert /tmp/doc.pdf .md")
+        return
+    fpath, fmt = parts[1], parts[2]
+    if not os.path.exists(fpath):
+        send(chat_id, f"Khong tim thay: {fpath}")
+        return
+    send(chat_id, "Dang convert...")
+    result = convert_file(fpath, fmt)
+    if result and os.path.exists(result):
+        tg_upload(result, chat_id, f"Converted: {os.path.basename(result)}")
+    else:
+        send(chat_id, result or "Convert failed")
+
+
+def handle_browse(chat_id, text):
+    parts = text.split()
+    if len(parts) < 2:
+        send(chat_id, "Usage: /browse <url>")
+        return
+    url = parts[1]
+    if not url.startswith("http"):
+        url = "https://" + url
+    send(chat_id, f"Dang truy cap {url}...")
+    content = browse_url(url)
+    messages = [
+        {"role": "system", "content": "Summarize this webpage content concisely in the user's language."},
+        {"role": "user", "content": content}
+    ]
+    summary = ai_chat(messages, max_tokens=500)
+    send(chat_id, summary)
+
+
+def handle_mcp(chat_id):
+    tools = []
+    # Check installed tools
+    checks = {
+        "CodeGraph": "which codegraph 2>/dev/null",
+        "MarkItDown": "which markitdown 2>/dev/null",
+        "Context7": "npm list -g @context7/mcp-server 2>/dev/null",
+        "Filesystem MCP": "npm list -g @anthropic-ai/mcp-filesystem 2>/dev/null",
+        "GitHub MCP": "npm list -g @anthropic-ai/mcp-github 2>/dev/null",
+        "Sequential Thinking": "npm list -g @anthropic-ai/mcp-sequential-thinking 2>/dev/null",
+        "Supabase MCP": "npm list -g @anthropic-ai/mcp-supabase 2>/dev/null",
+        "Browserbase MCP": "npm list -g @anthropic-ai/mcp-browserbase 2>/dev/null",
+        "Playwright MCP": "npm list -g @anthropic-ai/mcp-playwright 2>/dev/null",
+    }
+    for name, cmd in checks.items():
+        result = run(cmd)
+        status = "✅" if "empty" not in result.lower() and "ERR" not in result else "❌"
+        tools.append(f"{status} {name}")
+
+    status = "\n".join(tools)
+    send(chat_id, f"🛠 MCP Tools:\n\n{status}\n\n📊 CodeGraph: semantic code graph\n🌐 Browserbase: cloud headless browser\n🎬 OpenCut: video editor (classic)\n🧠 Anthropic Computer Use: built into Claude")
+
+
+def handle_search(chat_id, text):
+    query = text.replace("/search", "").strip()
+    if not query:
+        send(chat_id, "Usage: /search <query>")
+        return
+    url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+        results = re.findall(r'class="result__a" href="([^"]+)"[^>]*>([^<]+)</a>', html)
+        if results:
+            out = f"🔍 {query}:\n\n"
+            for i, (link, title) in enumerate(results[:5], 1):
+                out += f"{i}. {title.strip()}\n{link}\n\n"
+            send(chat_id, out)
+        else:
+            send(chat_id, "Khong tim thay ket qua")
+    except Exception as e:
+        send(chat_id, f"Search error: {e}")
+
+
+def handle_memory(chat_id, text, action):
+    memory = load_memory()
+    if action == "remember":
+        content = text.replace("/remember", "").strip()
+        if not content:
+            send(chat_id, "Usage: /remember <what to remember>")
+            return
+        key = hashlib.md5(content.encode()).hexdigest()[:8]
+        memory[key] = {"text": content, "time": datetime.now().isoformat()}
+        save_memory(memory)
+        send(chat_id, f"Da nho: {content}")
+    elif action == "recall":
+        if not memory:
+            send(chat_id, "Chua co memory nao.")
+            return
+        out = "🧠 Memory:\n\n"
+        for k, v in memory.items():
+            out += f"• {v['text']}\n"
+        send(chat_id, out[:4000])
+
+
+def handle_schedule(chat_id, text):
+    send(chat_id, "Schedule feature — use Hermes Agent cron system for persistent scheduling.")
 
 
 def main():
@@ -203,7 +321,7 @@ def main():
         return
 
     allowed = set(int(c.strip()) for c in ALLOWED_CHATS.split(",") if c.strip())
-    log.info(f"Bot v7 started! Model: {MODEL}")
+    log.info(f"PhantomBot v8 started! Model: {MODEL}")
 
     try:
         r = tg("getUpdates", {"offset": -1, "timeout": 1}, timeout=5)
@@ -250,17 +368,28 @@ def main():
 
                 lower = text.lower().strip()
 
+                # === Commands ===
                 if lower in ("/clear", "/reset"):
                     history.pop(chat_id, None)
                     send(chat_id, "Reset")
                     continue
 
                 if lower == "/start":
-                    send(chat_id, "PhantomBot v7 - Tu dong cai va su dung cong cu\n\n"
-                         "Vi du: chuyen anh sang PNG, nen file, tao PDF, convert video...\n"
-                         "!cmd <lenh> - chay truc tiep\n"
-                         "!upload <path> - gui file\n"
-                         "Gui file de luu vao /tmp/")
+                    send(chat_id, "PhantomBot v8 — AI Agent with MCP tools\n\n"
+                         "Commands:\n"
+                         "/search <query> — Web search\n"
+                         "/convert <file> <fmt> — Convert file (pdf→md, mp4→mp3...)\n"
+                         "/browse <url> — Browse & summarize webpage\n"
+                         "/mcp — List installed MCP tools\n"
+                         "/remember <text> — Save to memory\n"
+                         "/recall — Show saved memories\n"
+                         "/schedule — Scheduling info\n"
+                         "!cmd <command> — Run shell command\n"
+                         "!upload <path> — Send file\n"
+                         "!scan — System info\n"
+                         "!ps — Process list\n"
+                         "Send any file to save to /tmp/\n"
+                         "Or just chat with AI!")
                     continue
 
                 if lower.startswith("!cmd "):
@@ -288,12 +417,41 @@ def main():
                     send(chat_id, run("ps aux --sort=-%mem | head -15"))
                     continue
 
-                # Smart execution
+                # === Bot Commands ===
+                if lower.startswith("/search"):
+                    handle_search(chat_id, text)
+                    continue
+
+                if lower.startswith("/convert"):
+                    handle_convert(chat_id, text)
+                    continue
+
+                if lower.startswith("/browse"):
+                    handle_browse(chat_id, text)
+                    continue
+
+                if lower == "/mcp":
+                    handle_mcp(chat_id)
+                    continue
+
+                if lower.startswith("/remember"):
+                    handle_memory(chat_id, text, "remember")
+                    continue
+
+                if lower == "/recall":
+                    handle_memory(chat_id, text, "recall")
+                    continue
+
+                if lower.startswith("/schedule"):
+                    handle_schedule(chat_id, text)
+                    continue
+
+                # === Smart Execution ===
                 task_kw = ["convert", "chuyen", "nen", "compress", "extract", "resize",
                            "crop", "rotate", "merge", "split", "create", "generate", "make",
                            "build", "compile", "download", "tai", "fetch", "parse", "analyze",
                            "process", "edit", "modify", "video", "audio", "image", "anh",
-                           "file", "pdf", "mp3", "mp4", "png", "jpg", "cài", "install"]
+                           "file", "pdf", "mp3", "mp4", "png", "jpg", "cai", "install"]
 
                 if any(kw in lower for kw in task_kw):
                     send(chat_id, "Dang phan tich...")
@@ -301,11 +459,11 @@ def main():
                     send(chat_id, result)
                     continue
 
-                # AI chat
+                # === AI Chat ===
                 if chat_id not in history:
                     history[chat_id] = []
                 history[chat_id].append({"role": "user", "content": text})
-                resp = api_chat(text, history[chat_id])
+                resp = ai_chat([{"role": "system", "content": SYSTEM_PROMPT}] + history[chat_id][-12:])
                 history[chat_id].append({"role": "assistant", "content": resp})
                 if len(history[chat_id]) > 12:
                     history[chat_id] = history[chat_id][-12:]
