@@ -12,9 +12,6 @@ jobs:
       - uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
 
       - name: Install system deps
         run: |
@@ -23,29 +20,7 @@ jobs:
 
       - name: Install Python packages
         run: |
-          pip install "markitdown[all]" python-pptx openpyxl python-docx pymupdf anthropic playwright cloakbrowser ui-tars
-          playwright install chromium --with-deps 2>/dev/null || true
-
-      - name: Clone & install PPT Master
-        run: |
-          git clone https://github.com/hugohe3/ppt-master.git /tmp/ppt-master 2>/dev/null || true
-          cd /tmp/ppt-master && pip install -r requirements.txt 2>/dev/null || true
-
-      - name: Install Node.js MCP + tools
-        run: |
-          npm install -g \
-            @modelcontextprotocol/server-filesystem \
-            @modelcontextprotocol/server-github \
-            @supabase/mcp-server-supabase \
-            @upstash/context7-mcp \
-            @colbymchenry/codegraph \
-            sequential-thinking-mcp
-      - name: Init CodeGraph
-        run: codegraph init -i --yes 2>/dev/null || true
-
-      - name: Clone OpenCut
-        run: |
-          git clone https://github.com/opencut-app/opencut.git /tmp/opencut 2>/dev/null || true
+          pip install requests markitdown python-pptx openpyxl python-docx pymupdf
 
       - name: Start Telegram Bot
         env:
@@ -84,18 +59,6 @@ jobs:
         run: |
           echo "=== Bot ==="
           kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null && echo "bot: OK" || echo "bot: FAIL"
-          echo "=== MCP Tools ==="
-          npm list -g --depth=0 2>/dev/null | grep -E "server-|context7|mcp-|codegraph|supabase"
-          echo "=== CodeGraph ==="
-          which codegraph 2>/dev/null && echo "OK" || echo "not found"
-          echo "=== MarkItDown ==="
-          which markitdown 2>/dev/null && echo "OK" || echo "not found"
-          echo "=== PPT Master ==="
-          ls /tmp/ppt-master/README.md 2>/dev/null && echo "OK" || echo "not cloned"
-          echo "=== OpenCut ==="
-          ls /tmp/opencut/README.md 2>/dev/null && echo "OK" || echo "not cloned"
-          echo "=== Playwright ==="
-          python3 -c "import playwright; print('OK')" 2>/dev/null || echo "not found"
 
       - name: Keep Alive
         run: |
