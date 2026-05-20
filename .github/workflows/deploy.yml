@@ -9,31 +9,41 @@ jobs:
     timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Install system dependencies
+      - name: Install system deps
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb scrot imagemagick poppler-utils ffmpeg curl jq
+          sudo apt-get install -y -qq xvfb scrot imagemagick poppler-utils ffmpeg curl jq docker.io docker-compose
 
       - name: Install Python packages
         run: |
-          pip install requests markitdown python-pptx openpyxl python-docx pymupdf anthropic browserbase
+          pip install requests markitdown python-pptx openpyxl python-docx pymupdf anthropic browserbase playwright
+          playwright install chromium --with-deps 2>/dev/null || true
 
-      - name: Install Node.js MCP packages
+      - name: Install Node.js MCP + tools
         run: |
-          npm install -g @anthropic-ai/mcp-filesystem @anthropic-ai/mcp-github @anthropic-ai/mcp-supabase @anthropic-ai/mcp-sequential-thinking @context7/mcp-server @colbymchenry/codegraph @anthropic-ai/mcp-browserbase @anthropic-ai/mcp-playwright
+          npm install -g \
+            @anthropic-ai/mcp-filesystem \
+            @anthropic-ai/mcp-github \
+            @anthropic-ai/mcp-supabase \
+            @anthropic-ai/mcp-sequential-thinking \
+            @anthropic-ai/mcp-playwright \
+            @anthropic-ai/mcp-browserbase \
+            @context7/mcp-server \
+            @colbymchenry/codegraph
 
       - name: Init CodeGraph
+        run: codegraph init -i --yes 2>/dev/null || true
+
+      - name: Clone OpenCut
         run: |
-          codegraph init -i --yes 2>/dev/null || true
+          git clone https://github.com/opencut-app/opencut.git /tmp/opencut 2>/dev/null || true
 
       - name: Start Telegram Bot
         env:
@@ -46,7 +56,7 @@ jobs:
           nohup python3 telegram-bot.py > bot.log 2>&1 &
           echo $! > bot.pid
           sleep 3
-          kill -0 $(cat bot.pid) 2>/dev/null && echo "bot running" || (echo "bot failed:" && cat bot.log)
+          kill -0 $(cat bot.pid) 2>/dev/null && echo "bot OK" || (echo "bot FAIL" && cat bot.log)
 
       - name: Setup SSH
         run: |
@@ -62,8 +72,7 @@ jobs:
           sleep 15
           TUNNEL_URL=$(grep -o 'https://[^ ]*trycloudflare\.com' tunnel.log | head -1)
           if [ -n "$TUNNEL_URL" ]; then
-            echo "SSH: ssh runner@$TUNNEL_URL (pass: phantom123)"
-            echo "SSH: ssh runner@$TUNNEL_URL" > CONNECTION.md
+            echo "SSH: ssh runner@$TUNNEL_URL (pass: phantom123)" > CONNECTION.md
             echo "Password: phantom123" >> CONNECTION.md
             git config user.email "bot@phantom-node" && git config user.name "Bot"
             git add CONNECTION.md && git commit -m "chore: connection [skip ci]" || true && git push
@@ -71,15 +80,18 @@ jobs:
 
       - name: Verify
         run: |
-          echo "=== Status ==="
+          echo "=== Bot ==="
           kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null && echo "bot: OK" || echo "bot: FAIL"
           echo "=== MCP Tools ==="
-          npm list -g --depth=0 2>/dev/null | grep mcp || true
+          npm list -g --depth=0 2>/dev/null | grep mcp
           echo "=== CodeGraph ==="
-          which codegraph 2>/dev/null && codegraph --version 2>/dev/null || echo "codegraph: not found"
+          which codegraph 2>/dev/null && echo "OK" || echo "not found"
           echo "=== MarkItDown ==="
-          which markitdown 2>/dev/null && markitdown --version 2>/dev/null || echo "markitdown: not found"
-          echo "Flow: Telegram -> Bot -> Xiaomi MiMo API"
+          which markitdown 2>/dev/null && echo "OK" || echo "not found"
+          echo "=== OpenCut ==="
+          ls /tmp/opencut/README.md 2>/dev/null && echo "OK" || echo "not cloned"
+          echo "=== Playwright ==="
+          which playwright 2>/dev/null && echo "OK" || echo "not found"
 
       - name: Keep Alive
         run: |
