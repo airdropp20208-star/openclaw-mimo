@@ -39,8 +39,7 @@ jobs:
             @supabase/mcp-server-supabase \
             @upstash/context7-mcp \
             @colbymchenry/codegraph \
-            @anthropic-ai/mcp-sequential-thinking
-
+            sequential-thinking-mcp
       - name: Init CodeGraph
         run: codegraph init -i --yes 2>/dev/null || true
 

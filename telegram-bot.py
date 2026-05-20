@@ -233,7 +233,7 @@ def handle_mcp(chat_id):
         "Filesystem MCP": "npm list -g @modelcontextprotocol/server-filesystem",
         "GitHub MCP": "npm list -g @modelcontextprotocol/server-github",
         "Supabase MCP": "npm list -g @supabase/mcp-server-supabase",
-        "Sequential Thinking": "npm list -g @anthropic-ai/mcp-sequential-thinking",
+        "Sequential Thinking": "npm list -g @modelcontextprotocol/server-sequential-thinking",
     }
     tools = []
     for name, cmd in checks.items():
