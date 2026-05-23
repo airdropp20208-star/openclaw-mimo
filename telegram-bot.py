@@ -6,10 +6,16 @@ import os, json, logging, time, subprocess, urllib.request, urllib.error, urllib
 from datetime import datetime
 
 BOT_TOKEN=os.environ.get("BOT_TOKEN", "")
-API_KEY=os.environ.get("API_KEY", "")
 API_BASE = os.environ.get("API_BASE", "https://api.xiaomimimo.com/v1")
 MODEL = os.environ.get("MODEL", "mimo-v2.5")
 ALLOWED_CHATS = os.environ.get("ALLOWED_CHATS", "")
+
+# Key pool rotation — read from API_KEYS (comma-separated) or fallback to API_KEY
+_key_pool = [k.strip() for k in os.environ.get("API_KEYS", "").split(",") if k.strip()]
+if not _key_pool:
+    _single = os.environ.get("API_KEY", "")
+    if _single: _key_pool = [_single]
+_key_idx = 0
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("phantom")
@@ -44,12 +50,35 @@ def safe_path(user_input):
 
 
 def ai_chat(messages, max_tokens=800, temperature=0.3):
+    global _key_idx
+    if not _key_pool:
+        log.error("No API keys available!")
+        return "No API keys configured"
+    # Rotate key on each call
+    key = _key_pool[_key_idx % len(_key_pool)]
+    _key_idx += 1
     payload = json.dumps({"model": MODEL, "messages": messages, "max_tokens": max_tokens, "temperature": temperature}).encode()
     req = urllib.request.Request(f"{API_BASE}/chat/completions", data=payload,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {API_KEY}"})
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
             return json.loads(resp.read())["choices"][0]["message"]["content"].strip()
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            log.warning(f"Key #{_key_idx} invalid (401), trying next...")
+            # Try next key
+            for _ in range(len(_key_pool)):
+                key = _key_pool[_key_idx % len(_key_pool)]
+                _key_idx += 1
+                try:
+                    req2 = urllib.request.Request(f"{API_BASE}/chat/completions", data=payload,
+                        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
+                    with urllib.request.urlopen(req2, timeout=120) as resp:
+                        return json.loads(resp.read())["choices"][0]["message"]["content"].strip()
+                except:
+                    continue
+        log.error(f"API error: {e}")
+        return "API error"
     except Exception as e:
         log.error(f"API error: {e}")
         return "API error"
