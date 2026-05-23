@@ -14,45 +14,87 @@ jobs:
     timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install system deps
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb scrot imagemagick poppler-utils ffmpeg curl jq
 
-      - name: Install Python packages
+      - name: Install hermes-agent
         run: |
-          pip install requests markitdown python-pptx openpyxl python-docx pymupdf
+          pip install hermes-agent
+          hermes --version
 
-      - name: Save env to file
+      - name: Install OpenManus
         run: |
-          # Save env vars to file so Keep Alive loop can source them
-          echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" > /tmp/bot.env
-          echo "API_KEYS=${{ github.event.inputs.api_key }}" >> /tmp/bot.env
-          echo "API_BASE=https://api.xiaomimimo.com/v1" >> /tmp/bot.env
-          echo "MODEL=mimo-v2.5" >> /tmp/bot.env
-          echo "ALLOWED_CHATS=${{ secrets.ALLOWED_CHATS }}" >> /tmp/bot.env
-          echo "Env saved (BOT_TOKEN hidden):"
-          grep -v TOKEN /tmp/bot.env
+          git clone --depth 1 https://github.com/FoundationAgents/OpenManus.git /tmp/OpenManus
+          cd /tmp/OpenManus
+          pip install -r requirements.txt
+          playwright install chromium --with-deps
+          echo "OpenManus installed OK"
+
+      - name: Setup OpenManus config
+        run: |
+          mkdir -p /tmp/OpenManus/config
+          cat > /tmp/OpenManus/config/config.toml << 'TOML'
+          [llm]
+          model = "mimo-v2.5"
+          base_url = "https://api.xiaomimimo.com/v1"
+          max_tokens = 4096
+          temperature = 0.0
+
+          [browser]
+          headless = true
+          disable_security = true
+          extra_chromium_args = ["--no-sandbox", "--disable-dev-shm-usage"]
+
+          [search]
+          engine = "DuckDuckGo"
+          TOML
+          # Inject API key into config
+          sed -i "s|^          max_tokens|max_tokens|" /tmp/OpenManus/config/config.toml
+          sed -i '/^\[llm\]/,/^\[/{s|^          |  |}' /tmp/OpenManus/config/config.toml
+          sed -i '/^\[browser\]/,/^\[/{s|^          |  |}' /tmp/OpenManus/config/config.toml
+          sed -i '/^\[search\]/,/^\[/{s|^          |  |}' /tmp/OpenManus/config/config.toml
+          sed -i 's/^          //' /tmp/OpenManus/config/config.toml
+
+      - name: Setup Hermes config
+        run: |
+          mkdir -p ~/.hermes
+          cat > ~/.hermes/config.yaml << 'YAML'
+          model:
+            default: "mimo-v2.5"
+            provider: "xiaomi"
+            base_url: "https://api.xiaomimimo.com/v1"
+          agent:
+            max_turns: 90
+            gateway_timeout: 1800
+          terminal:
+            backend: local
+            timeout: 180
+          toolsets:
+          - hermes-cli
+          YAML
+          # Fix indentation
+          sed -i 's/^          //' ~/.hermes/config.yaml
 
       - name: Start Bot
         env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          API_KEYS: ${{ github.event.inputs.api_key }}
-          API_BASE: "https://api.xiaomimimo.com/v1"
-          MODEL: "mimo-v2.5"
-          ALLOWED_CHATS: ${{ secrets.ALLOWED_CHATS }}
+          XIAOMI_API_KEY: ${{ github.event.inputs.api_key }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          TELEGRAM_ALLOWED_USERS: ${{ secrets.ALLOWED_CHATS }}
+          HERMES_INFERENCE_PROVIDER: xiaomi
         run: |
-          # Kill any old bot instances first
-          pkill -f telegram-bot.py 2>/dev/null || true
+          pkill -f "hermes gateway" 2>/dev/null || true
           sleep 1
-          nohup python3 telegram-bot.py > bot.log 2>&1 &
+          nohup hermes gateway run > bot.log 2>&1 &
           echo $! > bot.pid
-          sleep 3
-          kill -0 $(cat bot.pid) 2>/dev/null && echo "bot OK" || (echo "bot FAIL" && cat bot.log)
+          sleep 5
+          kill -0 $(cat bot.pid) 2>/dev/null && echo "bot OK" || (echo "bot FAIL" && cat bot.log | tail -30)
 
       - name: Setup SSH
         run: |
@@ -80,26 +122,22 @@ jobs:
           echo "=== Bot ==="
           kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null && echo "bot: OK" || echo "bot: FAIL"
           echo "=== Log ==="
-          tail -10 bot.log 2>/dev/null || echo "(empty)"
+          tail -20 bot.log 2>/dev/null || echo "(empty)"
+          echo "=== OpenManus ==="
+          ls /tmp/OpenManus/main.py && echo "OpenManus: OK" || echo "OpenManus: MISSING"
 
       - name: Keep Alive
         run: |
           while true; do
             TS=$(date '+%Y-%m-%d %H:%M:%S')
-            # Check bot
             if ! kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null; then
               echo "[$TS] bot down, restarting..."
-              pkill -f telegram-bot.py 2>/dev/null || true
+              pkill -f "hermes gateway" 2>/dev/null || true
               sleep 2
-              # Source env file for Keep Alive restart
-              set -a
-              source /tmp/bot.env
-              set +a
-              nohup python3 telegram-bot.py > bot.log 2>&1 &
+              nohup hermes gateway run > bot.log 2>&1 &
               echo $! > bot.pid
               echo "[$TS] bot restarted, pid=$(cat bot.pid)"
             fi
-            # Check tunnel
             if ! kill -0 $(cat tunnel.pid 2>/dev/null) 2>/dev/null; then
               echo "[$TS] tunnel down, restarting..."
               nohup cloudflared tunnel --url ssh://localhost:22 > tunnel.log 2>&1 &
