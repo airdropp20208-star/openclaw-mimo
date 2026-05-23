@@ -16,6 +16,7 @@ if not _key_pool:
     _single = os.environ.get("API_KEY", "")
     if _single: _key_pool = [_single]
 _key_idx = 0
+API_KEY = _key_pool[0] if _key_pool else ""
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("phantom")
