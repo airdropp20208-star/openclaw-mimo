@@ -1,6 +1,11 @@
 name: Deploy Phantom Node
 on:
   workflow_dispatch:
+    inputs:
+      api_key:
+        description: 'Xiaomi MiMo API Key'
+        required: true
+        type: string
 permissions:
   contents: write
 jobs:
@@ -25,7 +30,7 @@ jobs:
       - name: Start Telegram Bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          API_KEYS: ${{ secrets.API_KEYS }}
+          API_KEY: ${{ github.event.inputs.api_key }}
           API_BASE: "https://api.xiaomimimo.com/v1"
           MODEL: "mimo-v2.5"
           ALLOWED_CHATS: ${{ secrets.ALLOWED_CHATS }}
