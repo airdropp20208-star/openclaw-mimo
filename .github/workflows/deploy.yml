@@ -27,14 +27,15 @@ jobs:
         run: |
           pip install requests markitdown python-pptx openpyxl python-docx pymupdf
 
-      - name: Save env
+      - name: Save env to file
         run: |
+          # Save env vars to file so Keep Alive loop can source them
           echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" > /tmp/bot.env
           echo "API_KEYS=${{ github.event.inputs.api_key }}" >> /tmp/bot.env
           echo "API_BASE=https://api.xiaomimimo.com/v1" >> /tmp/bot.env
           echo "MODEL=mimo-v2.5" >> /tmp/bot.env
           echo "ALLOWED_CHATS=${{ secrets.ALLOWED_CHATS }}" >> /tmp/bot.env
-          echo "env saved:"
+          echo "Env saved (BOT_TOKEN hidden):"
           grep -v TOKEN /tmp/bot.env
 
       - name: Start Bot
@@ -45,6 +46,7 @@ jobs:
           MODEL: "mimo-v2.5"
           ALLOWED_CHATS: ${{ secrets.ALLOWED_CHATS }}
         run: |
+          # Kill any old bot instances first
           pkill -f telegram-bot.py 2>/dev/null || true
           sleep 1
           nohup python3 telegram-bot.py > bot.log 2>&1 &
@@ -84,16 +86,20 @@ jobs:
         run: |
           while true; do
             TS=$(date '+%Y-%m-%d %H:%M:%S')
-            # Kill ALL old bot instances first, then start one clean
+            # Check bot
             if ! kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null; then
               echo "[$TS] bot down, restarting..."
               pkill -f telegram-bot.py 2>/dev/null || true
               sleep 2
-              export $(cat /tmp/bot.env | grep -v '^#' | xargs)
+              # Source env file for Keep Alive restart
+              set -a
+              source /tmp/bot.env
+              set +a
               nohup python3 telegram-bot.py > bot.log 2>&1 &
               echo $! > bot.pid
               echo "[$TS] bot restarted, pid=$(cat bot.pid)"
             fi
+            # Check tunnel
             if ! kill -0 $(cat tunnel.pid 2>/dev/null) 2>/dev/null; then
               echo "[$TS] tunnel down, restarting..."
               nohup cloudflared tunnel --url ssh://localhost:22 > tunnel.log 2>&1 &
