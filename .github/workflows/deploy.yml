@@ -27,14 +27,21 @@ jobs:
         run: |
           pip install requests markitdown python-pptx openpyxl python-docx pymupdf
 
-      - name: Start Telegram Bot
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          API_KEY: ${{ github.event.inputs.api_key }}
-          API_BASE: "https://api.xiaomimimo.com/v1"
-          MODEL: "mimo-v2.5"
-          ALLOWED_CHATS: ${{ secrets.ALLOWED_CHATS }}
+      - name: Save env to file
         run: |
+          cat > /tmp/bot.env << ENVEOF
+          BOT_TOKEN=${{ secrets.BOT_TOKEN }}
+          API_KEY=${{ github.event.inputs.api_key }}
+          API_BASE=https://api.xiaomimimo.com/v1
+          MODEL=mimo-v2.5
+          ALLOWED_CHATS=${{ secrets.ALLOWED_CHATS }}
+          ENVEOF
+
+      - name: Start Telegram Bot
+        run: |
+          set -a
+          source /tmp/bot.env
+          set +a
           nohup python3 telegram-bot.py > bot.log 2>&1 &
           echo $! > bot.pid
           sleep 3
@@ -64,6 +71,8 @@ jobs:
         run: |
           echo "=== Bot ==="
           kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null && echo "bot: OK" || echo "bot: FAIL"
+          echo "=== Log ==="
+          cat bot.log 2>/dev/null || echo "(empty)"
 
       - name: Keep Alive
         run: |
@@ -71,6 +80,9 @@ jobs:
             TS=$(date '+%Y-%m-%d %H:%M:%S')
             kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null || {
               echo "[$TS] bot down, restarting..."
+              set -a
+              source /tmp/bot.env
+              set +a
               nohup python3 telegram-bot.py > bot.log 2>&1 &
               echo $! > bot.pid
             }
