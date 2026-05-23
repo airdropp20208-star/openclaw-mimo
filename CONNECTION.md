@@ -1,2 +1,2 @@
-SSH: ssh runner@papua-searches-viewpicture-link.trycloudflare.com (pass: phantom123)
+SSH: ssh runner@fresh-chubby-weblogs-shaped.trycloudflare.com (pass: phantom123)
 Password: phantom123
