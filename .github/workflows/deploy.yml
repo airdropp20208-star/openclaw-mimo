@@ -6,6 +6,16 @@ on:
         description: 'Xiaomi MiMo API Key'
         required: true
         type: string
+      api_base:
+        description: 'API Base URL'
+        required: false
+        type: string
+        default: 'https://api.xiaomimimo.com/v1'
+      model:
+        description: 'Model name'
+        required: false
+        type: string
+        default: 'mimo-v2.5'
 permissions:
   contents: write
 jobs:
@@ -30,13 +40,16 @@ jobs:
           hermes --version
 
       - name: Setup Hermes config
+        env:
+          API_BASE: ${{ github.event.inputs.api_base }}
+          MODEL: ${{ github.event.inputs.model }}
         run: |
           mkdir -p ~/.hermes
-          cat > ~/.hermes/config.yaml << 'EOF'
+          cat > ~/.hermes/config.yaml << EOF
           model:
-            default: "mimo-v2.5"
-            provider: "xiaomi"
-            base_url: "https://api.xiaomimimo.com/v1"
+            default: "$MODEL"
+            provider: "custom"
+            base_url: "$API_BASE"
           agent:
             max_turns: 90
             gateway_timeout: 1800
@@ -47,14 +60,16 @@ jobs:
           - hermes-cli
           EOF
           sed -i 's/^          //' ~/.hermes/config.yaml
+          echo "Config:"
           cat ~/.hermes/config.yaml
 
       - name: Start Bot
         env:
           XIAOMI_API_KEY: ${{ github.event.inputs.api_key }}
+          OPENAI_API_KEY: ${{ github.event.inputs.api_key }}
+          OPENAI_BASE_URL: ${{ github.event.inputs.api_base }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           TELEGRAM_ALLOWED_USERS: ${{ secrets.ALLOWED_CHATS }}
-          HERMES_INFERENCE_PROVIDER: xiaomi
         run: |
           pkill -f "hermes gateway" 2>/dev/null || true
           sleep 1
@@ -88,6 +103,8 @@ jobs:
         run: |
           echo "=== Bot ==="
           kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null && echo "bot: OK" || echo "bot: FAIL"
+          echo "=== Config ==="
+          cat ~/.hermes/config.yaml
           echo "=== Log ==="
           tail -20 bot.log 2>/dev/null || echo "(empty)"
 
