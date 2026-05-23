@@ -29,43 +29,10 @@ jobs:
           pip install hermes-agent
           hermes --version
 
-      - name: Install OpenManus
-        run: |
-          git clone --depth 1 https://github.com/FoundationAgents/OpenManus.git /tmp/OpenManus
-          cd /tmp/OpenManus
-          pip install -r requirements.txt
-          playwright install chromium --with-deps
-          echo "OpenManus installed OK"
-
-      - name: Setup OpenManus config
-        run: |
-          mkdir -p /tmp/OpenManus/config
-          cat > /tmp/OpenManus/config/config.toml << 'TOML'
-          [llm]
-          model = "mimo-v2.5"
-          base_url = "https://api.xiaomimimo.com/v1"
-          max_tokens = 4096
-          temperature = 0.0
-
-          [browser]
-          headless = true
-          disable_security = true
-          extra_chromium_args = ["--no-sandbox", "--disable-dev-shm-usage"]
-
-          [search]
-          engine = "DuckDuckGo"
-          TOML
-          # Inject API key into config
-          sed -i "s|^          max_tokens|max_tokens|" /tmp/OpenManus/config/config.toml
-          sed -i '/^\[llm\]/,/^\[/{s|^          |  |}' /tmp/OpenManus/config/config.toml
-          sed -i '/^\[browser\]/,/^\[/{s|^          |  |}' /tmp/OpenManus/config/config.toml
-          sed -i '/^\[search\]/,/^\[/{s|^          |  |}' /tmp/OpenManus/config/config.toml
-          sed -i 's/^          //' /tmp/OpenManus/config/config.toml
-
       - name: Setup Hermes config
         run: |
           mkdir -p ~/.hermes
-          cat > ~/.hermes/config.yaml << 'YAML'
+          cat > ~/.hermes/config.yaml << 'EOF'
           model:
             default: "mimo-v2.5"
             provider: "xiaomi"
@@ -78,9 +45,9 @@ jobs:
             timeout: 180
           toolsets:
           - hermes-cli
-          YAML
-          # Fix indentation
+          EOF
           sed -i 's/^          //' ~/.hermes/config.yaml
+          cat ~/.hermes/config.yaml
 
       - name: Start Bot
         env:
@@ -93,7 +60,7 @@ jobs:
           sleep 1
           nohup hermes gateway run > bot.log 2>&1 &
           echo $! > bot.pid
-          sleep 5
+          sleep 8
           kill -0 $(cat bot.pid) 2>/dev/null && echo "bot OK" || (echo "bot FAIL" && cat bot.log | tail -30)
 
       - name: Setup SSH
@@ -123,8 +90,6 @@ jobs:
           kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null && echo "bot: OK" || echo "bot: FAIL"
           echo "=== Log ==="
           tail -20 bot.log 2>/dev/null || echo "(empty)"
-          echo "=== OpenManus ==="
-          ls /tmp/OpenManus/main.py && echo "OpenManus: OK" || echo "OpenManus: MISSING"
 
       - name: Keep Alive
         run: |
