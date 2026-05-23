@@ -1,2 +1,2 @@
-SSH: ssh runner@implied-legend-clocks-smell.trycloudflare.com (pass: phantom123)
+SSH: ssh runner@papua-searches-viewpicture-link.trycloudflare.com (pass: phantom123)
 Password: phantom123
