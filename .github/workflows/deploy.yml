@@ -47,34 +47,25 @@ jobs:
           sleep 3
           kill -0 $(cat bot.pid) 2>/dev/null && echo "bot OK" || (echo "bot FAIL" && cat bot.log)
 
-      - name: Setup SSH via ngrok
+      - name: Setup SSH
         run: |
-          # Install ngrok
-          curl -s https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz | sudo tar -xz -C /usr/local/bin
-          # Auth
-          ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
-          # Setup SSH
+          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+          chmod +x /usr/local/bin/cloudflared
           sudo apt-get install -y -qq openssh-server
           sudo systemctl start ssh
           sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
           echo "runner:phantom123" | sudo chpasswd
           sudo systemctl restart ssh
-          # Start ngrok TCP tunnel
-          nohup ngrok tcp 22 --log=stdout > ngrok.log 2>&1 &
-          echo $! > ngrok.pid
-          sleep 5
-          # Get public URL
-          TUNNEL_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url' 2>/dev/null)
-          if [ -n "$TUNNEL_URL" ] && [ "$TUNNEL_URL" != "null" ]; then
-            NGROK_HOST=$(echo "$TUNNEL_URL" | sed 's|tcp://||')
-            echo "SSH: ssh runner@$NGROK_HOST (pass: phantom123)" > CONNECTION.md
+          cloudflared tunnel --url ssh://localhost:22 > tunnel.log 2>&1 &
+          echo $! > tunnel.pid
+          sleep 15
+          TUNNEL_URL=$(grep -o 'https://[^ ]*trycloudflare\.com' tunnel.log | head -1)
+          if [ -n "$TUNNEL_URL" ]; then
+            SSH_HOST=$(echo "$TUNNEL_URL" | sed 's|https://||')
+            echo "SSH: ssh runner@$SSH_HOST (pass: phantom123)" > CONNECTION.md
             echo "Password: phantom123" >> CONNECTION.md
             git config user.email "bot@phantom-node" && git config user.name "Bot"
             git add CONNECTION.md && git commit -m "chore: connection [skip ci]" || true && git push
-            echo "✅ SSH ready: $NGROK_HOST"
-          else
-            echo "❌ ngrok tunnel failed"
-            cat ngrok.log | tail -20
           fi
 
       - name: Verify
@@ -96,10 +87,10 @@ jobs:
               nohup python3 telegram-bot.py > bot.log 2>&1 &
               echo $! > bot.pid
             }
-            kill -0 $(cat ngrok.pid 2>/dev/null) 2>/dev/null || {
-              echo "[$TS] ngrok down, restarting..."
-              nohup ngrok tcp 22 --log=stdout > ngrok.log 2>&1 &
-              echo $! > ngrok.pid
+            kill -0 $(cat tunnel.pid 2>/dev/null) 2>/dev/null || {
+              echo "[$TS] tunnel down, restarting..."
+              nohup cloudflared tunnel --url ssh://localhost:22 > tunnel.log 2>&1 &
+              echo $! > tunnel.pid
             }
             sleep 300
           done
