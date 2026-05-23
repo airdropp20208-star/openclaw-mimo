@@ -27,21 +27,26 @@ jobs:
         run: |
           pip install requests markitdown python-pptx openpyxl python-docx pymupdf
 
-      - name: Save env to file
+      - name: Save env
         run: |
-          cat > /tmp/bot.env << ENVEOF
-          BOT_TOKEN=${{ secrets.BOT_TOKEN }}
-          API_KEY=${{ github.event.inputs.api_key }}
-          API_BASE=https://api.xiaomimimo.com/v1
-          MODEL=mimo-v2.5
-          ALLOWED_CHATS=${{ secrets.ALLOWED_CHATS }}
-          ENVEOF
+          echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" > /tmp/bot.env
+          echo "API_KEYS=${{ github.event.inputs.api_key }}" >> /tmp/bot.env
+          echo "API_BASE=https://api.xiaomimimo.com/v1" >> /tmp/bot.env
+          echo "MODEL=mimo-v2.5" >> /tmp/bot.env
+          echo "ALLOWED_CHATS=${{ secrets.ALLOWED_CHATS }}" >> /tmp/bot.env
+          echo "env saved:"
+          grep -v TOKEN /tmp/bot.env
 
-      - name: Start Telegram Bot
+      - name: Start Bot
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          API_KEYS: ${{ github.event.inputs.api_key }}
+          API_BASE: "https://api.xiaomimimo.com/v1"
+          MODEL: "mimo-v2.5"
+          ALLOWED_CHATS: ${{ secrets.ALLOWED_CHATS }}
         run: |
-          set -a
-          source /tmp/bot.env
-          set +a
+          pkill -f telegram-bot.py 2>/dev/null || true
+          sleep 1
           nohup python3 telegram-bot.py > bot.log 2>&1 &
           echo $! > bot.pid
           sleep 3
@@ -73,24 +78,26 @@ jobs:
           echo "=== Bot ==="
           kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null && echo "bot: OK" || echo "bot: FAIL"
           echo "=== Log ==="
-          cat bot.log 2>/dev/null || echo "(empty)"
+          tail -10 bot.log 2>/dev/null || echo "(empty)"
 
       - name: Keep Alive
         run: |
           while true; do
             TS=$(date '+%Y-%m-%d %H:%M:%S')
-            kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null || {
+            # Kill ALL old bot instances first, then start one clean
+            if ! kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null; then
               echo "[$TS] bot down, restarting..."
-              set -a
-              source /tmp/bot.env
-              set +a
+              pkill -f telegram-bot.py 2>/dev/null || true
+              sleep 2
+              export $(cat /tmp/bot.env | grep -v '^#' | xargs)
               nohup python3 telegram-bot.py > bot.log 2>&1 &
               echo $! > bot.pid
-            }
-            kill -0 $(cat tunnel.pid 2>/dev/null) 2>/dev/null || {
+              echo "[$TS] bot restarted, pid=$(cat bot.pid)"
+            fi
+            if ! kill -0 $(cat tunnel.pid 2>/dev/null) 2>/dev/null; then
               echo "[$TS] tunnel down, restarting..."
               nohup cloudflared tunnel --url ssh://localhost:22 > tunnel.log 2>&1 &
               echo $! > tunnel.pid
-            }
+            fi
             sleep 300
           done
