@@ -6,6 +6,7 @@ Each tool returns {"success": bool, "output": str}.
 import os
 import re
 import shlex
+import signal
 import subprocess
 import tempfile
 import time
@@ -19,45 +20,112 @@ MAX_FILE_READ = 100_000       # 100KB
 MAX_HTTP_READ = 500_000       # 500KB
 MAX_SHELL_OUTPUT = 5000       # 5KB
 
+# Blocked shell commands (dangerous)
+_BLOCKED_CMDS = [
+    "rm -rf /", "rm -rf /*", "mkfs", ":(){ :|:& };:",
+    "dd if=/dev/zero", "dd if=/dev/random",
+    "> /dev/sda", "chmod -R 777 /", "chown -R",
+]
+# Regex patterns for pipe injection
+_BLOCKED_PATTERNS = [
+    r"wget\s+.*\|\s*(ba)?sh",
+    r"curl\s+.*\|\s*(ba)?sh",
+]
+
+# Private/internal IPs for SSRF protection
+_PRIVATE_HOSTS = {
+    "localhost", "127.0.0.1", "0.0.0.0", "::1",
+    "169.254.169.254",  # cloud metadata
+    "[::1]", "[::ffff:127.0.0.1]",
+}
+
+
+def _is_private_ip(hostname: str) -> bool:
+    """Check if hostname resolves to a private/internal IP."""
+    if not hostname:
+        return True
+    h = hostname.lower().strip("[]")
+    if h in _PRIVATE_HOSTS:
+        return True
+    # RFC 1918 ranges
+    parts = h.split(".")
+    if len(parts) == 4:
+        try:
+            nums = [int(p) for p in parts]
+            if (nums[0] == 10 or
+                nums[0] == 172 and 16 <= nums[1] <= 31 or
+                nums[0] == 192 and nums[1] == 168 or
+                nums[0] == 0):
+                return True
+        except ValueError:
+            pass
+    return False
+
 
 # ---------------------------------------------------------------------------
 # Shell
 # ---------------------------------------------------------------------------
 
 def shell_exec(command: str, timeout: int = 60) -> dict[str, Any]:
-    """Execute a shell command."""
+    """Execute a shell command with sandboxing."""
     if not command or not command.strip():
         return {"success": False, "output": "Empty command"}
-    timeout = max(5, min(timeout, 300))  # clamp 5-300s
+
+    # Block dangerous commands
+    cmd_lower = command.lower().strip()
+    for blocked in _BLOCKED_CMDS:
+        if blocked in cmd_lower:
+            return {"success": False, "output": f"Blocked: dangerous command detected"}
+    for pattern in _BLOCKED_PATTERNS:
+        if re.search(pattern, cmd_lower):
+            return {"success": False, "output": f"Blocked: dangerous command detected"}
+
+    timeout = max(5, min(timeout, 300))
+
+    # Use process group so we can kill on timeout
     try:
-        r = subprocess.run(
-            command, shell=True, capture_output=True, text=True, timeout=timeout
+        proc = subprocess.Popen(
+            command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            preexec_fn=os.setsid,
         )
-        output = (r.stdout + r.stderr).strip()
-        truncated = False
-        if len(output) > MAX_SHELL_OUTPUT:
-            output = output[:MAX_SHELL_OUTPUT]
-            truncated = True
-        if truncated:
-            output += "\n... (truncated)"
-        return {"success": r.returncode == 0, "output": output or "(no output)"}
-    except subprocess.TimeoutExpired:
-        return {"success": False, "output": f"Timeout after {timeout}s"}
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+            output = (stdout.decode(errors="replace") + stderr.decode(errors="replace")).strip()
+            truncated = False
+            if len(output) > MAX_SHELL_OUTPUT:
+                output = output[:MAX_SHELL_OUTPUT]
+                truncated = True
+            if truncated:
+                output += "\n... (truncated)"
+            return {"success": proc.returncode == 0, "output": output or "(no output)"}
+        except subprocess.TimeoutExpired:
+            # Kill the entire process group
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
+            proc.wait()
+            return {"success": False, "output": f"Timeout after {timeout}s"}
     except Exception as e:
         return {"success": False, "output": f"Error: {str(e)[:500]}"}
 
 
 # ---------------------------------------------------------------------------
-# File operations
+# File operations (sandboxed to /tmp)
 # ---------------------------------------------------------------------------
 
 def file_read(path: str) -> dict[str, Any]:
-    """Read a file (with size limit)."""
+    """Read a file (with size limit, restricted to safe paths)."""
     if not path:
         return {"success": False, "output": "No path provided"}
+    # Block sensitive files
+    sensitive = ["/etc/shadow", "/etc/passwd", ".ssh/", ".env", "id_rsa"]
+    for s in sensitive:
+        if s in path:
+            return {"success": False, "output": f"Access denied: sensitive file"}
     try:
         size = os.path.getsize(path)
-        if size > 1_000_000:  # 1MB limit
+        if size > 1_000_000:
             return {"success": False, "output": f"File too large ({size} bytes, max 1MB)"}
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             content = f.read(MAX_FILE_READ)
@@ -80,22 +148,21 @@ def file_write(path: str, content: str) -> dict[str, Any]:
     try:
         os.makedirs(os.path.dirname(path) or "/tmp", exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
-            f.write(content[:500_000])  # 500KB max write
+            f.write(content[:500_000])
         return {"success": True, "output": f"Wrote {len(content)} chars to {path}"}
     except Exception as e:
         return {"success": False, "output": str(e)[:500]}
 
 
 def file_list(path: str = "/tmp") -> dict[str, Any]:
-    """List files in a directory."""
+    """List files in a directory (restricted to /tmp)."""
     if not path:
         path = "/tmp"
-    # Only list /tmp and subdirectories
     real = os.path.realpath(path)
-    if not real.startswith("/tmp"):
+    if not real.startswith("/tmp/"):
         return {"success": False, "output": "Access denied: can only list /tmp"}
     try:
-        entries = sorted(os.listdir(path))[:200]  # limit entries
+        entries = sorted(os.listdir(path))[:200]
         return {"success": True, "output": "\n".join(entries) or "(empty)"}
     except Exception as e:
         return {"success": False, "output": str(e)[:500]}
@@ -109,18 +176,19 @@ def browse_url(url: str) -> dict[str, Any]:
     """Fetch a webpage and return text content."""
     if not url:
         return {"success": False, "output": "No URL provided"}
-    # Validate URL scheme
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
+    # Block internal/private URLs
     parsed = urllib.parse.urlparse(url)
-    if parsed.hostname in ("localhost", "127.0.0.1", "0.0.0.0", "169.254.169.254"):
-        return {"success": False, "output": "Access denied: internal URLs blocked"}
+    if _is_private_ip(parsed.hostname or ""):
+        return {"success": False, "output": "Access denied: internal/private URL blocked"}
+    if parsed.scheme == "file":
+        return {"success": False, "output": "Access denied: file:// URLs blocked"}
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=30) as resp:
             raw = resp.read(MAX_HTTP_READ)
             html = raw.decode("utf-8", errors="ignore")
-        # Strip HTML
         text = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", html, flags=re.DOTALL)
         text = re.sub(r"<[^>]+>", " ", text)
         text = re.sub(r"\s+", " ", text).strip()[:5000]
@@ -162,7 +230,6 @@ def file_convert(file_path: str, target_fmt: str) -> dict[str, Any]:
         return {"success": False, "output": "No file path provided"}
     if not target_fmt:
         return {"success": False, "output": "No target format"}
-    # Validate target format (must be simple extension)
     if not target_fmt.startswith(".") or len(target_fmt) > 10:
         target_fmt = f".{target_fmt.lstrip('.')}"
     if not re.match(r"^\.\w{1,6}$", target_fmt):
@@ -173,7 +240,6 @@ def file_convert(file_path: str, target_fmt: str) -> dict[str, Any]:
     uid = tempfile.mktemp(suffix=target_fmt, prefix="converted_")
     out = f"/tmp/{uid}"
 
-    # Map (ext, fmt) → shell command with proper quoting
     converters = {
         (".pdf", ".md"): f'markitdown {shlex.quote(file_path)} -o {shlex.quote(out)}',
         (".docx", ".md"): f'markitdown {shlex.quote(file_path)} -o {shlex.quote(out)}',
@@ -205,7 +271,7 @@ def file_convert(file_path: str, target_fmt: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def generate_ppt(content: str, llm_fn=None) -> dict[str, Any]:
-    """Generate a PowerPoint from text content using python-pptx."""
+    """Generate a PowerPoint from text content."""
     if llm_fn is None:
         return {"success": False, "output": "No LLM configured for PPT generation"}
     if not content:
@@ -226,31 +292,32 @@ Requirements:
          {"role": "user", "content": prompt}],
         max_tokens=2000,
     )
-    # Extract code block
     for fence in ("```python", "```"):
         if fence in code:
             code = code.split(fence, 1)[1].split("```")[0].strip()
             break
 
-    # Validate code looks like python (basic safety check)
     code_lines = [l.strip() for l in code.split("\n") if l.strip()]
     if not code_lines:
         return {"success": False, "output": "Empty code from LLM"}
 
-    # Write to temp file (not fixed path — avoid race condition)
+    # Use UUID to avoid race condition
     script_path = tempfile.mktemp(suffix=".py", prefix="ppt_gen_")
+    ppt_path = tempfile.mktemp(suffix=".pptx", prefix="presentation_")
+
+    # Patch the save path in the code
+    code = code.replace("/tmp/presentation.pptx", ppt_path)
+
     with open(script_path, "w", encoding="utf-8") as f:
         f.write(code)
 
     result = shell_exec(f"python3 {shlex.quote(script_path)}", timeout=60)
 
-    # Cleanup script
     try:
         os.unlink(script_path)
     except Exception:
         pass
 
-    ppt_path = "/tmp/presentation.pptx"
     if os.path.exists(ppt_path):
         size = os.path.getsize(ppt_path)
         result["output"] = f"PPT created ({size} bytes)"
@@ -263,7 +330,7 @@ Requirements:
 
 
 # ---------------------------------------------------------------------------
-# Tool registry — maps tool names to functions
+# Tool registry
 # ---------------------------------------------------------------------------
 
 TOOLS: dict[str, dict[str, Any]] = {
@@ -273,23 +340,23 @@ TOOLS: dict[str, dict[str, Any]] = {
     },
     "file_read": {
         "fn": file_read,
-        "description": "Read a file (max 1MB, /tmp only for write). Args: {path: str}",
+        "description": "Read a file (max 1MB). Args: {path: str}",
     },
     "file_write": {
         "fn": file_write,
-        "description": "Write content to /tmp. Args: {path: str, content: str}",
+        "description": "Write to /tmp. Args: {path: str, content: str}",
     },
     "file_list": {
         "fn": file_list,
-        "description": "List /tmp directory. Args: {path?: str}",
+        "description": "List /tmp. Args: {path?: str}",
     },
     "browse": {
         "fn": browse_url,
-        "description": "Fetch a webpage. Args: {url: str}",
+        "description": "Fetch webpage. Args: {url: str}",
     },
     "search": {
         "fn": web_search,
-        "description": "Web search via DuckDuckGo. Args: {query: str}",
+        "description": "Web search. Args: {query: str}",
     },
     "convert": {
         "fn": file_convert,

@@ -127,23 +127,27 @@ def send_document(chat_id: int, file_path: str, caption: str = "") -> None:
 # Memory
 # ---------------------------------------------------------------------------
 
-MEMORY_FILE = "/tmp/hermes_memory.json"
+MEMORY_DIR = "/tmp/hermes_memory"
 
 
-def load_memory() -> dict:
+def load_memory(chat_id: int = 0) -> dict:
     try:
-        with open(MEMORY_FILE, encoding="utf-8") as f:
+        os.makedirs(MEMORY_DIR, exist_ok=True)
+        path = os.path.join(MEMORY_DIR, f"{chat_id}.json")
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
 
-def save_memory(data: dict) -> None:
+def save_memory(data: dict, chat_id: int = 0) -> None:
     try:
-        tmp = MEMORY_FILE + ".tmp"
+        os.makedirs(MEMORY_DIR, exist_ok=True)
+        path = os.path.join(MEMORY_DIR, f"{chat_id}.json")
+        tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
-        os.replace(tmp, MEMORY_FILE)
+        os.replace(tmp, path)
     except Exception as e:
         logger.error("Save memory failed: %s", e)
 
@@ -161,7 +165,11 @@ def download_file(file_id: str, file_name: str) -> str | None:
         if not file_path:
             return None
         url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
-        local = f"/tmp/{file_name}"
+        # Sanitize filename — prevent path traversal
+        safe_name = os.path.basename(file_name).replace("..", "_").replace("/", "_")
+        if not safe_name:
+            safe_name = f"download_{int(time.time())}"
+        local = f"/tmp/{safe_name}"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=60) as resp:
             with open(local, "wb") as f:
@@ -420,15 +428,15 @@ def main():
                     if not content:
                         send(chat_id, "Usage: /remember <what>")
                         continue
-                    memory = load_memory()
+                    memory = load_memory(chat_id)
                     key = hashlib.sha256(content.encode()).hexdigest()[:12]
                     memory[key] = {"text": content, "time": datetime.now().isoformat()}
-                    save_memory(memory)
+                    save_memory(memory, chat_id)
                     send(chat_id, f"✅ Remembered: {content}")
                     continue
 
                 if lower == "/recall":
-                    memory = load_memory()
+                    memory = load_memory(chat_id)
                     if not memory:
                         send(chat_id, "No memories stored.")
                         continue

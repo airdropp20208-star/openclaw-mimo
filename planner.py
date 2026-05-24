@@ -180,8 +180,8 @@ class Planner:
                     st["status"] = "completed"
                     st["result"] = result
                     goal.updated_at = datetime.now().isoformat()
-                    # Check if all subtasks done
-                    if all(s["status"] == "completed" for s in goal.subtasks):
+                    # Only complete goal if it has subtasks AND all are done
+                    if goal.subtasks and all(s["status"] == "completed" for s in goal.subtasks):
                         goal.status = "completed"
                         logger.info("Goal %s completed!", goal.goal_id)
                     self._save()
@@ -191,6 +191,8 @@ class Planner:
     def fail_subtask(self, subtask_id: str, reason: str = "") -> Optional[Goal]:
         """Mark a subtask as failed."""
         for goal in self._goals:
+            if goal.status != "active":
+                continue
             for st in goal.subtasks:
                 if st["id"] == subtask_id:
                     st["status"] = "failed"

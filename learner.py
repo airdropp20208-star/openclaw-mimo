@@ -317,7 +317,7 @@ Return ONLY the JSON object."""
             template=pattern.get("template"),
             triggers=pattern.get("triggers", []),
             examples=[{
-                "request": user_request[:200],
+                "request": _sanitize(user_request[:100]),
                 "tools": tools_used,
                 "duration": duration_sec,
             }],
@@ -331,13 +331,12 @@ Return ONLY the JSON object."""
         """Find an existing skill with similar name or triggers."""
         name_lower = name.lower()
         for skill in self._skills:
-            # Match by name similarity
             if skill.name.lower() == name_lower:
                 return skill
-            # Match by trigger overlap
+            # Match by trigger overlap — require 2+ matches to avoid false positives
             if triggers and skill.triggers:
                 overlap = set(t.lower() for t in triggers) & set(t.lower() for t in skill.triggers)
-                if len(overlap) >= 1:
+                if len(overlap) >= 2:
                     return skill
         return None
 
@@ -447,6 +446,18 @@ Return ONLY the JSON object."""
 
 
 # --- Helpers ---
+
+def _sanitize(text: str) -> str:
+    """Remove potentially sensitive data from text."""
+    import re
+    # Remove email addresses
+    text = re.sub(r'\S+@\S+\.\S+', '[email]', text)
+    # Remove potential API keys (long alphanumeric strings)
+    text = re.sub(r'\b[A-Za-z0-9_-]{20,}\b', '[key]', text)
+    # Remove potential passwords
+    text = re.sub(r'(?i)(password|passwd|pwd|secret|token)\s*[=:]\s*\S+', r'\1=[redacted]', text)
+    return text
+
 
 def _categorize_tools(tools: list[str]) -> str:
     """Categorize based on tools used."""
