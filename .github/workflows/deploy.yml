@@ -1,4 +1,4 @@
-name: Deploy Hermes-OpenManus
+name: Deploy Hermes Agent
 on:
   workflow_dispatch:
     inputs:
@@ -36,41 +36,18 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb scrot imagemagick poppler-utils ffmpeg curl jq
+          sudo apt-get install -y -qq ffmpeg imagemagick poppler-utils
 
-      - name: Install dependencies
-        run: |
-          pip install -q -r requirements.txt
-          pip install -q pyautogen 2>/dev/null || echo "AutoGen optional"
-          pip install -q playwright 2>/dev/null || true
-          playwright install chromium --with-deps 2>/dev/null || true
-          hermes --version 2>/dev/null || pip install -q hermes-agent
+      - name: Install Python deps
+        run: pip install -q -r requirements.txt
 
-      - name: Setup Config
-        env:
-          API_BASE: ${{ github.event.inputs.api_base }}
-          MODEL: ${{ github.event.inputs.model }}
+      - name: Kill old processes
         run: |
-          mkdir -p ~/.hermes
-          cat > ~/.hermes/config.yaml << EOF
-          model:
-            default: "$MODEL"
-            provider: "custom"
-            base_url: "$API_BASE"
-          agent:
-            max_turns: 90
-            gateway_timeout: 1800
-          terminal:
-            backend: local
-            timeout: 180
-          toolsets:
-          - hermes-cli
-          EOF
-          sed -i 's/^          //' ~/.hermes/config.yaml
+          pkill -f "python bot.py" 2>/dev/null || true
+          sleep 1
 
       - name: Start Bot
         env:
-          XIAOMI_API_KEY: ${{ github.event.inputs.api_key }}
           API_KEY: ${{ github.event.inputs.api_key }}
           API_KEYS: ${{ github.event.inputs.api_keys }}
           API_BASE: ${{ github.event.inputs.api_base }}
@@ -78,63 +55,37 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           ALLOWED_CHATS: ${{ secrets.ALLOWED_CHATS }}
         run: |
-          pkill -f "python main.py" 2>/dev/null || true
-          sleep 1
-          nohup python main.py > bot.log 2>&1 &
+          nohup python bot.py > bot.log 2>&1 &
           echo $! > bot.pid
           sleep 5
-          kill -0 $(cat bot.pid) 2>/dev/null && echo "bot OK" || (echo "bot FAIL" && cat bot.log | tail -30)
-
-      - name: Setup SSH
-        run: |
-          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
-          chmod +x /usr/local/bin/cloudflared
-          sudo apt-get install -y -qq openssh-server
-          sudo systemctl start ssh
-          sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
-          echo "runner:phantom123" | sudo chpasswd
-          sudo systemctl restart ssh
-          cloudflared tunnel --url ssh://localhost:22 > tunnel.log 2>&1 &
-          echo $! > tunnel.pid
-          sleep 15
-          TUNNEL_URL=$(grep -o 'https://[^ ]*trycloudflare\.com' tunnel.log | head -1)
-          if [ -n "$TUNNEL_URL" ]; then
-            SSH_HOST=$(echo "$TUNNEL_URL" | sed 's|https://||')
-            echo "SSH: ssh runner@$SSH_HOST (pass: phantom123)" > CONNECTION.md
-            echo "Password: phantom123" >> CONNECTION.md
-            git config user.email "bot@hermes-node" && git config user.name "Bot"
-            git add CONNECTION.md && git commit -m "chore: connection [skip ci]" || true && git push
+          if kill -0 $(cat bot.pid) 2>/dev/null; then
+            echo "✅ Bot started (PID: $(cat bot.pid))"
+          else
+            echo "❌ Bot failed to start:"
+            tail -30 bot.log
+            exit 1
           fi
 
       - name: Verify
         run: |
-          echo "=== Bot ==="
+          echo "=== Process ==="
           kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null && echo "bot: OK" || echo "bot: FAIL"
-          echo "=== Modules ==="
-          python -c "from src.core.router import IntentRouter; print('router: OK')"
-          python -c "from src.core.brain import HermesBrain; print('brain: OK')"
-          python -c "from src.core.executor import OpenManusExecutor; print('executor: OK')"
-          python -c "from src.tools import ToolRegistry; print('tools: OK')"
-          python -c "from src.memory.skills import SkillManager; print('skills: OK')"
+          echo "=== Imports ==="
+          python -c "from agent import HermesAgent; print('agent: OK')"
+          python -c "from tools import TOOLS; print(f'tools: {len(TOOLS)} loaded')"
           echo "=== Log ==="
-          tail -20 bot.log 2>/dev/null || echo "(empty)"
+          tail -10 bot.log 2>/dev/null || echo "(empty)"
 
       - name: Keep Alive
         run: |
           while true; do
-            TS=$(date '+%Y-%m-%d %H:%M:%S')
             if ! kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null; then
-              echo "[$TS] bot down, restarting..."
-              pkill -f "python main.py" 2>/dev/null || true
+              echo "[$(date)] Bot down, restarting..."
+              pkill -f "python bot.py" 2>/dev/null || true
               sleep 2
-              nohup python main.py > bot.log 2>&1 &
+              nohup python bot.py > bot.log 2>&1 &
               echo $! > bot.pid
-              echo "[$TS] bot restarted, pid=$(cat bot.pid)"
-            fi
-            if ! kill -0 $(cat tunnel.pid 2>/dev/null) 2>/dev/null; then
-              echo "[$TS] tunnel down, restarting..."
-              nohup cloudflared tunnel --url ssh://localhost:22 > tunnel.log 2>&1 &
-              echo $! > tunnel.pid
+              echo "[$(date)] Restarted (PID: $(cat bot.pid))"
             fi
             sleep 300
           done
