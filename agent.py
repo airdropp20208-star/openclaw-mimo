@@ -441,10 +441,11 @@ class HermesAgent:
         self._history.pop(chat_id, None)
 
     def cleanup_old_chats(self, max_chats: int = 100) -> int:
-        if len(self._history) <= max_chats:
+        all_ids = set(self._history) | set(self._planners) | set(self._learners)
+        if len(all_ids) <= max_chats:
             return 0
-        to_remove = len(self._history) - max_chats
-        sorted_ids = sorted(self._history.keys())
+        to_remove = len(all_ids) - max_chats
+        sorted_ids = sorted(all_ids)
         for chat_id in sorted_ids[:to_remove]:
             self._history.pop(chat_id, None)
             self._planners.pop(chat_id, None)

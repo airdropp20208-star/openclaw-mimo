@@ -6,3 +6,4 @@ bot.pid
 tunnel.log
 tunnel.pid
 /tmp/
+data/

@@ -61,7 +61,8 @@ class Goal:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Goal":
-        return cls(**{k: v for k, v in data.items() if k in cls.__init__.__code__.co_varnames})
+        valid = {k for k in cls.__init__.__code__.co_varnames if k != "self"}
+        return cls(**{k: v for k, v in data.items() if k in valid})
 
     @property
     def progress(self) -> float:

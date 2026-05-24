@@ -90,7 +90,8 @@ class Skill:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Skill":
-        return cls(**{k: v for k, v in data.items() if k in cls.__init__.__code__.co_varnames})
+        valid = {k for k in cls.__init__.__code__.co_varnames if k != "self"}
+        return cls(**{k: v for k, v in data.items() if k in valid})
 
 
 class TaskRecord:
