@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
-Hermes Bot — Telegram bot powered by Hermes Agent + OpenManus tools.
+Hermes Bot — Autonomous AI agent with OpenManus tools.
+
+3 capabilities:
+1. Tool-using — execute tools
+2. Autonomous — self-plan, auto-chain steps
+3. Learning — extract skills from successful tasks
 
 Usage:
     BOT_TOKEN=xxx API_KEY=xxx python bot.py
@@ -31,7 +36,6 @@ MODEL = os.environ.get("MODEL", "mimo-v2.5")
 ALLOWED_CHATS_RAW = os.environ.get("ALLOWED_CHATS", "")
 RATE_LIMIT = float(os.environ.get("RATE_LIMIT", "2"))
 
-# Key pool: API_KEYS (comma-separated) or single API_KEY
 _key_pool = [k.strip() for k in os.environ.get("API_KEYS", "").split(",") if k.strip()]
 if not _key_pool:
     _single = os.environ.get("API_KEY", "")
@@ -45,25 +49,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger("hermes-bot")
 
-# Graceful shutdown
 _shutdown = False
-
 
 def _signal_handler(signum, frame):
     global _shutdown
     logger.info("Received signal %s, shutting down...", signum)
     _shutdown = True
 
-
 # ---------------------------------------------------------------------------
-# Telegram API helpers
+# Telegram API
 # ---------------------------------------------------------------------------
 
 _TG_BASE = f"https://api.telegram.org/bot{BOT_TOKEN}" if BOT_TOKEN else ""
 
 
 def tg(method: str, data: dict | None = None, timeout: int = 10) -> dict:
-    """Call Telegram Bot API with error handling."""
     if not _TG_BASE:
         raise RuntimeError("BOT_TOKEN not set")
     url = f"{_TG_BASE}/{method}"
@@ -72,15 +72,10 @@ def tg(method: str, data: dict | None = None, timeout: int = 10) -> dict:
     if body:
         req.add_header("Content-Type", "application/json")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        result = json.loads(resp.read())
-        if not result.get("ok", True):
-            desc = result.get("description", "Unknown error")
-            logger.warning("Telegram API %s failed: %s", method, desc)
-        return result
+        return json.loads(resp.read())
 
 
 def send(chat_id: int, text: str) -> None:
-    """Send a text message, splitting if over 4096 chars."""
     if not text:
         return
     try:
@@ -89,7 +84,7 @@ def send(chat_id: int, text: str) -> None:
         else:
             for i in range(0, len(text), 4096):
                 tg("sendMessage", {"chat_id": chat_id, "text": text[i : i + 4096]})
-                time.sleep(0.1)  # avoid flood
+                time.sleep(0.1)
     except Exception as e:
         logger.error("Send failed to %d: %s", chat_id, e)
 
@@ -102,13 +97,10 @@ def send_chat_action(chat_id: int, action: str = "typing") -> None:
 
 
 def send_document(chat_id: int, file_path: str, caption: str = "") -> None:
-    """Upload a file as document."""
     try:
         mime = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
         boundary = f"----HermesBot{int(time.time() * 1000)}"
-        fname = os.path.basename(file_path)
-        # Sanitize filename
-        fname = fname.replace('"', "_").replace("\r", "").replace("\n", "")
+        fname = os.path.basename(file_path).replace('"', "_")
         with open(file_path, "rb") as f:
             fdata = f.read()
         caption_clean = caption.replace("\r", "").replace("\n", " ")[:1024]
@@ -124,19 +116,16 @@ def send_document(chat_id: int, file_path: str, caption: str = "") -> None:
         req = urllib.request.Request(f"{_TG_BASE}/sendDocument", data=body)
         req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
         with urllib.request.urlopen(req, timeout=60) as resp:
-            result = json.loads(resp.read())
-            if not result.get("ok"):
-                logger.error("Send document failed: %s", result.get("description"))
+            return json.loads(resp.read())
     except Exception as e:
         logger.error("Send document failed: %s", e)
 
 
 # ---------------------------------------------------------------------------
-# Memory (simple JSON)
+# Memory
 # ---------------------------------------------------------------------------
 
 MEMORY_FILE = "/tmp/hermes_memory.json"
-
 
 def load_memory() -> dict:
     try:
@@ -145,27 +134,24 @@ def load_memory() -> dict:
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
-
 def save_memory(data: dict) -> None:
     try:
         tmp = MEMORY_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
-        os.replace(tmp, MEMORY_FILE)  # atomic write
+        os.replace(tmp, MEMORY_FILE)
     except Exception as e:
         logger.error("Save memory failed: %s", e)
 
 
 # ---------------------------------------------------------------------------
-# File download from Telegram
+# File download
 # ---------------------------------------------------------------------------
 
 def download_file(file_id: str, file_name: str) -> str | None:
-    """Download a file from Telegram to /tmp/."""
     try:
         info = tg("getFile", {"file_id": file_id}, timeout=15)
         if not info.get("ok") or "result" not in info:
-            logger.error("getFile failed: %s", info.get("description"))
             return None
         file_path = info["result"].get("file_path", "")
         if not file_path:
@@ -187,32 +173,29 @@ def download_file(file_id: str, file_name: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Help text
+# Help
 # ---------------------------------------------------------------------------
 
-HELP = """🤖 *Hermes Agent* — AI + OpenManus Tools
+HELP = """🤖 *Hermes Agent v2* — Autonomous AI
 
-Just chat with me and I'll help!
+*3 capabilities:*
+🔧 Tool-using — execute commands, browse, search, convert files
+🧠 Autonomous — self-plan, auto-chain multi-step tasks
+📚 Learning — remembers successful skills for reuse
 
 *Commands:*
+/start — Help
 /clear — Clear history
-/remember <text> — Save to memory
+/skills — List learned skills
+/remember <text> — Save memory
 /recall — View memory
-/health — System health
-/help — This message
+/health — System info
 
-*What I can do:*
-🔧 Execute shell commands
-🌐 Browse & search the web
-📁 Read/write/convert files
-📊 Generate PPT presentations
-🧠 Remember things for you
-
-Or just ask me anything!"""
+*Just ask me anything — I plan and execute automatically!*"""
 
 
 # ---------------------------------------------------------------------------
-# Main bot loop
+# Main
 # ---------------------------------------------------------------------------
 
 def main():
@@ -223,19 +206,16 @@ def main():
         logger.error("API_KEY or API_KEYS not set!")
         sys.exit(1)
 
-    # Signal handlers
     signal.signal(signal.SIGTERM, _signal_handler)
     signal.signal(signal.SIGINT, _signal_handler)
 
-    # Parse allowed chats
     allowed: set[int] = set()
     if ALLOWED_CHATS_RAW:
         try:
             allowed = {int(c.strip()) for c in ALLOWED_CHATS_RAW.split(",") if c.strip()}
         except ValueError:
-            logger.warning("Invalid ALLOWED_CHATS, allowing all")
+            pass
 
-    # Create agent
     agent = HermesAgent(
         api_keys=_key_pool,
         api_base=API_BASE,
@@ -243,32 +223,23 @@ def main():
     )
 
     logger.info("=" * 50)
-    logger.info("Hermes Bot starting — model: %s", MODEL)
-    logger.info("API keys: %d", len(_key_pool))
-    logger.info("Allowed chats: %s", allowed or "all")
+    logger.info("Hermes Agent v2 — model: %s, skills: %d", MODEL, len(agent._skills))
     logger.info("=" * 50)
 
     # Get initial offset
     try:
         r = tg("getUpdates", {"offset": -1, "timeout": 1}, timeout=5)
-        if r.get("result"):
-            offset = r["result"][-1]["update_id"] + 1
-        else:
-            offset = 0
+        offset = r["result"][-1]["update_id"] + 1 if r.get("result") else 0
     except Exception:
         offset = 0
 
-    # Rate limiting
     last_response: dict[int, float] = {}
-
-    # Poll error backoff
     poll_errors = 0
-    MAX_POLL_BACKOFF = 60
 
     while not _shutdown:
         try:
             result = tg("getUpdates", {"offset": offset, "timeout": 30}, timeout=60)
-            poll_errors = 0  # reset on success
+            poll_errors = 0
 
             for update in result.get("result", []):
                 if _shutdown:
@@ -307,14 +278,12 @@ def main():
                 if allowed and chat_id not in allowed:
                     continue
 
-                # Rate limiting
                 now = time.time()
                 if chat_id in last_response and now - last_response[chat_id] < RATE_LIMIT:
                     continue
                 last_response[chat_id] = now
 
                 logger.info("[%d] %s", chat_id, text[:100])
-
                 lower = text.lower().strip()
 
                 # --- Commands ---
@@ -328,14 +297,32 @@ def main():
                     continue
 
                 if lower == "/health":
+                    skills = agent.list_skills()
                     chat_count = len(agent._history)
+                    active_plans = len(agent._plans)
                     send(chat_id, (
-                        f"🟢 *Hermes Agent*\n"
+                        f"🟢 *Hermes Agent v2*\n"
                         f"Model: `{MODEL}`\n"
                         f"Keys: `{len(_key_pool)}`\n"
-                        f"API: `{API_BASE}`\n"
-                        f"Active chats: `{chat_count}`"
+                        f"Active chats: `{chat_count}`\n"
+                        f"Active plans: `{active_plans}`\n"
+                        f"Learned skills: `{len(skills)}`"
                     ))
+                    continue
+
+                if lower == "/skills":
+                    skills = agent.list_skills()
+                    if not skills:
+                        send(chat_id, "No skills learned yet.\nI learn automatically from successful tasks!")
+                        continue
+                    lines = [f"📚 *Learned Skills ({len(skills)}):\n"]
+                    for s in skills[:20]:
+                        name = s.get("name", "unknown")
+                        desc = s.get("description", "")[:80]
+                        cat = s.get("category", "")
+                        count = s.get("success_count", 1)
+                        lines.append(f"• `{name}` ({cat}) — {desc} [×{count}]")
+                    send(chat_id, "\n".join(lines))
                     continue
 
                 if lower.startswith("/remember"):
@@ -367,26 +354,30 @@ def main():
                     send(chat_id, "🧠 Memory:\n\n" + "\n".join(lines))
                     continue
 
-                # --- Agent processing ---
+                # --- Autonomous agent processing ---
                 send_chat_action(chat_id)
-                try:
-                    # Periodic cleanup
-                    removed = agent.cleanup_old_chats(max_chats=100)
-                    if removed:
-                        logger.info("Cleaned up %d old chat histories", removed)
 
-                    response = agent.process(chat_id, text)
+                # Progress callback for multi-step tasks
+                def progress(step, total, desc):
+                    try:
+                        send_chat_action(chat_id)
+                        logger.info("Progress: step %d/%d — %s", step, total, desc)
+                    except Exception:
+                        pass
+
+                try:
+                    agent.cleanup_old_chats(max_chats=100)
+                    response = agent.process(chat_id, text, progress_fn=progress)
                     send(chat_id, response)
                 except Exception as e:
                     logger.exception("Agent error for chat %d", chat_id)
                     send(chat_id, "⚠️ Error processing your request. Try again.")
 
         except KeyboardInterrupt:
-            logger.info("Interrupted, shutting down...")
             break
         except Exception as e:
             poll_errors += 1
-            backoff = min(poll_errors * 2, MAX_POLL_BACKOFF)
+            backoff = min(poll_errors * 2, 60)
             logger.error("Poll error (%d): %s — retrying in %ds", poll_errors, e, backoff)
             time.sleep(backoff)
 
