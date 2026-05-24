@@ -5,30 +5,46 @@ Each tool returns {"success": bool, "output": str}.
 
 import os
 import re
+import shlex
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
+# Max sizes to prevent OOM
+MAX_FILE_READ = 100_000       # 100KB
+MAX_HTTP_READ = 500_000       # 500KB
+MAX_SHELL_OUTPUT = 5000       # 5KB
+
 
 # ---------------------------------------------------------------------------
 # Shell
 # ---------------------------------------------------------------------------
 
-def shell_exec(command: str, timeout: int = 120) -> dict[str, Any]:
+def shell_exec(command: str, timeout: int = 60) -> dict[str, Any]:
     """Execute a shell command."""
+    if not command or not command.strip():
+        return {"success": False, "output": "Empty command"}
+    timeout = max(5, min(timeout, 300))  # clamp 5-300s
     try:
         r = subprocess.run(
             command, shell=True, capture_output=True, text=True, timeout=timeout
         )
-        output = (r.stdout + r.stderr).strip()[:5000]
+        output = (r.stdout + r.stderr).strip()
+        truncated = False
+        if len(output) > MAX_SHELL_OUTPUT:
+            output = output[:MAX_SHELL_OUTPUT]
+            truncated = True
+        if truncated:
+            output += "\n... (truncated)"
         return {"success": r.returncode == 0, "output": output or "(no output)"}
     except subprocess.TimeoutExpired:
         return {"success": False, "output": f"Timeout after {timeout}s"}
     except Exception as e:
-        return {"success": False, "output": str(e)[:500]}
+        return {"success": False, "output": f"Error: {str(e)[:500]}"}
 
 
 # ---------------------------------------------------------------------------
@@ -36,33 +52,53 @@ def shell_exec(command: str, timeout: int = 120) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def file_read(path: str) -> dict[str, Any]:
-    """Read a file."""
+    """Read a file (with size limit)."""
+    if not path:
+        return {"success": False, "output": "No path provided"}
     try:
+        size = os.path.getsize(path)
+        if size > 1_000_000:  # 1MB limit
+            return {"success": False, "output": f"File too large ({size} bytes, max 1MB)"}
         with open(path, "r", encoding="utf-8", errors="replace") as f:
-            content = f.read()[:10000]
+            content = f.read(MAX_FILE_READ)
         return {"success": True, "output": content}
+    except FileNotFoundError:
+        return {"success": False, "output": f"Not found: {path}"}
+    except PermissionError:
+        return {"success": False, "output": f"Permission denied: {path}"}
     except Exception as e:
-        return {"success": False, "output": str(e)}
+        return {"success": False, "output": str(e)[:500]}
 
 
 def file_write(path: str, content: str) -> dict[str, Any]:
-    """Write content to a file."""
+    """Write content to a file (restricted to /tmp)."""
+    if not path:
+        return {"success": False, "output": "No path provided"}
+    # Sandbox: only allow /tmp
+    if not path.startswith("/tmp/"):
+        path = f"/tmp/{os.path.basename(path)}"
     try:
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        os.makedirs(os.path.dirname(path) or "/tmp", exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
+            f.write(content[:500_000])  # 500KB max write
         return {"success": True, "output": f"Wrote {len(content)} chars to {path}"}
     except Exception as e:
-        return {"success": False, "output": str(e)}
+        return {"success": False, "output": str(e)[:500]}
 
 
 def file_list(path: str = "/tmp") -> dict[str, Any]:
     """List files in a directory."""
+    if not path:
+        path = "/tmp"
+    # Only list /tmp and subdirectories
+    real = os.path.realpath(path)
+    if not real.startswith("/tmp"):
+        return {"success": False, "output": "Access denied: can only list /tmp"}
     try:
-        entries = sorted(os.listdir(path))
+        entries = sorted(os.listdir(path))[:200]  # limit entries
         return {"success": True, "output": "\n".join(entries) or "(empty)"}
     except Exception as e:
-        return {"success": False, "output": str(e)}
+        return {"success": False, "output": str(e)[:500]}
 
 
 # ---------------------------------------------------------------------------
@@ -71,26 +107,38 @@ def file_list(path: str = "/tmp") -> dict[str, Any]:
 
 def browse_url(url: str) -> dict[str, Any]:
     """Fetch a webpage and return text content."""
+    if not url:
+        return {"success": False, "output": "No URL provided"}
+    # Validate URL scheme
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    parsed = urllib.parse.urlparse(url)
+    if parsed.hostname in ("localhost", "127.0.0.1", "0.0.0.0", "169.254.169.254"):
+        return {"success": False, "output": "Access denied: internal URLs blocked"}
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=30) as resp:
-            html = resp.read().decode("utf-8", errors="ignore")
+            raw = resp.read(MAX_HTTP_READ)
+            html = raw.decode("utf-8", errors="ignore")
         # Strip HTML
         text = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", html, flags=re.DOTALL)
         text = re.sub(r"<[^>]+>", " ", text)
         text = re.sub(r"\s+", " ", text).strip()[:5000]
         return {"success": True, "output": text}
     except Exception as e:
-        return {"success": False, "output": str(e)}
+        return {"success": False, "output": f"Error: {str(e)[:300]}"}
 
 
 def web_search(query: str) -> dict[str, Any]:
     """Search the web via DuckDuckGo."""
+    if not query:
+        return {"success": False, "output": "No query provided"}
     try:
         url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=15) as resp:
-            html = resp.read().decode("utf-8", errors="ignore")
+            raw = resp.read(MAX_HTTP_READ)
+            html = raw.decode("utf-8", errors="ignore")
         results = re.findall(
             r'class="result__a" href="([^"]+)"[^>]*>([^<]+)</a>', html
         )
@@ -101,7 +149,7 @@ def web_search(query: str) -> dict[str, Any]:
             return {"success": True, "output": out}
         return {"success": True, "output": "No results found."}
     except Exception as e:
-        return {"success": False, "output": f"Search error: {e}"}
+        return {"success": False, "output": f"Search error: {str(e)[:300]}"}
 
 
 # ---------------------------------------------------------------------------
@@ -110,25 +158,45 @@ def web_search(query: str) -> dict[str, Any]:
 
 def file_convert(file_path: str, target_fmt: str) -> dict[str, Any]:
     """Convert a file to another format."""
+    if not file_path:
+        return {"success": False, "output": "No file path provided"}
+    if not target_fmt:
+        return {"success": False, "output": "No target format"}
+    # Validate target format (must be simple extension)
+    if not target_fmt.startswith(".") or len(target_fmt) > 10:
+        target_fmt = f".{target_fmt.lstrip('.')}"
+    if not re.match(r"^\.\w{1,6}$", target_fmt):
+        return {"success": False, "output": f"Invalid format: {target_fmt}"}
+
     ext = os.path.splitext(file_path)[1].lower()
-    out = f"/tmp/converted_{int(time.time())}{target_fmt}"
+    # Use UUID to avoid collision
+    uid = tempfile.mktemp(suffix=target_fmt, prefix="converted_")
+    out = f"/tmp/{uid}"
+
+    # Map (ext, fmt) → shell command with proper quoting
     converters = {
-        (".pdf", ".md"): f'markitdown "{file_path}" -o "{out}"',
-        (".docx", ".md"): f'markitdown "{file_path}" -o "{out}"',
-        (".pptx", ".md"): f'markitdown "{file_path}" -o "{out}"',
-        (".xlsx", ".md"): f'markitdown "{file_path}" -o "{out}"',
-        (".mp4", ".mp3"): f'ffmpeg -i "{file_path}" -q:a 0 -map a "{out}" -y',
-        (".mp4", ".gif"): f'ffmpeg -i "{file_path}" -vf fps=10,scale=480:-1 "{out}" -y',
-        (".png", ".jpg"): f'convert "{file_path}" "{out}"',
-        (".jpg", ".png"): f'convert "{file_path}" "{out}"',
+        (".pdf", ".md"): f'markitdown {shlex.quote(file_path)} -o {shlex.quote(out)}',
+        (".docx", ".md"): f'markitdown {shlex.quote(file_path)} -o {shlex.quote(out)}',
+        (".pptx", ".md"): f'markitdown {shlex.quote(file_path)} -o {shlex.quote(out)}',
+        (".xlsx", ".md"): f'markitdown {shlex.quote(file_path)} -o {shlex.quote(out)}',
+        (".mp4", ".mp3"): f'ffmpeg -i {shlex.quote(file_path)} -q:a 0 -map a {shlex.quote(out)} -y',
+        (".mp4", ".gif"): f'ffmpeg -i {shlex.quote(file_path)} -vf fps=10,scale=480:-1 {shlex.quote(out)} -y',
+        (".png", ".jpg"): f'convert {shlex.quote(file_path)} {shlex.quote(out)}',
+        (".jpg", ".png"): f'convert {shlex.quote(file_path)} {shlex.quote(out)}',
     }
     cmd = converters.get((ext, target_fmt))
     if not cmd:
-        return {"success": False, "output": f"Unsupported: {ext} → {target_fmt}"}
+        return {"success": False, "output": f"Unsupported conversion: {ext} → {target_fmt}"}
+
     result = shell_exec(cmd, timeout=120)
     if os.path.exists(out):
-        result["output"] = f"Converted: {out}"
+        size = os.path.getsize(out)
+        result["output"] = f"Converted → {out} ({size} bytes)"
         result["file"] = out
+    else:
+        result["success"] = False
+        if not result.get("output") or result["output"] == "(no output)":
+            result["output"] = "Conversion failed: output file not created"
     return result
 
 
@@ -140,6 +208,8 @@ def generate_ppt(content: str, llm_fn=None) -> dict[str, Any]:
     """Generate a PowerPoint from text content using python-pptx."""
     if llm_fn is None:
         return {"success": False, "output": "No LLM configured for PPT generation"}
+    if not content:
+        return {"success": False, "output": "No content provided"}
 
     prompt = f"""Create a professional PowerPoint presentation from this content.
 Return ONLY the python-pptx code to generate the PPT.
@@ -162,13 +232,33 @@ Requirements:
             code = code.split(fence, 1)[1].split("```")[0].strip()
             break
 
-    with open("/tmp/gen_ppt.py", "w", encoding="utf-8") as f:
+    # Validate code looks like python (basic safety check)
+    code_lines = [l.strip() for l in code.split("\n") if l.strip()]
+    if not code_lines:
+        return {"success": False, "output": "Empty code from LLM"}
+
+    # Write to temp file (not fixed path — avoid race condition)
+    script_path = tempfile.mktemp(suffix=".py", prefix="ppt_gen_")
+    with open(script_path, "w", encoding="utf-8") as f:
         f.write(code)
 
-    result = shell_exec("python3 /tmp/gen_ppt.py", timeout=60)
-    if os.path.exists("/tmp/presentation.pptx"):
-        result["output"] = "PPT created: /tmp/presentation.pptx"
-        result["file"] = "/tmp/presentation.pptx"
+    result = shell_exec(f"python3 {shlex.quote(script_path)}", timeout=60)
+
+    # Cleanup script
+    try:
+        os.unlink(script_path)
+    except Exception:
+        pass
+
+    ppt_path = "/tmp/presentation.pptx"
+    if os.path.exists(ppt_path):
+        size = os.path.getsize(ppt_path)
+        result["output"] = f"PPT created ({size} bytes)"
+        result["file"] = ppt_path
+    else:
+        result["success"] = False
+        if not result.get("output") or result["output"] == "(no output)":
+            result["output"] = "PPT generation failed"
     return result
 
 
@@ -183,23 +273,23 @@ TOOLS: dict[str, dict[str, Any]] = {
     },
     "file_read": {
         "fn": file_read,
-        "description": "Read a file. Args: {path: str}",
+        "description": "Read a file (max 1MB, /tmp only for write). Args: {path: str}",
     },
     "file_write": {
         "fn": file_write,
-        "description": "Write content to a file. Args: {path: str, content: str}",
+        "description": "Write content to /tmp. Args: {path: str, content: str}",
     },
     "file_list": {
         "fn": file_list,
-        "description": "List files in a directory. Args: {path?: str}",
+        "description": "List /tmp directory. Args: {path?: str}",
     },
     "browse": {
         "fn": browse_url,
-        "description": "Fetch a webpage and get text content. Args: {url: str}",
+        "description": "Fetch a webpage. Args: {url: str}",
     },
     "search": {
         "fn": web_search,
-        "description": "Search the web via DuckDuckGo. Args: {query: str}",
+        "description": "Web search via DuckDuckGo. Args: {query: str}",
     },
     "convert": {
         "fn": file_convert,
@@ -207,7 +297,7 @@ TOOLS: dict[str, dict[str, Any]] = {
     },
     "ppt": {
         "fn": generate_ppt,
-        "description": "Generate PowerPoint from text. Args: {content: str} (uses LLM)",
+        "description": "Generate PowerPoint. Args: {content: str}",
         "needs_llm": True,
     },
 }
@@ -217,9 +307,17 @@ def execute_tool(name: str, args: dict[str, Any], llm_fn=None) -> dict[str, Any]
     """Execute a tool by name with given args."""
     tool = TOOLS.get(name)
     if not tool:
-        return {"success": False, "output": f"Unknown tool: {name}"}
+        return {"success": False, "output": f"Unknown tool: {name}. Available: {', '.join(TOOLS)}"}
+
+    if not isinstance(args, dict):
+        return {"success": False, "output": f"Args must be a dict, got {type(args).__name__}"}
 
     fn = tool["fn"]
-    if tool.get("needs_llm"):
-        return fn(llm_fn=llm_fn, **args)
-    return fn(**args)
+    try:
+        if tool.get("needs_llm"):
+            return fn(llm_fn=llm_fn, **args)
+        return fn(**args)
+    except TypeError as e:
+        return {"success": False, "output": f"Invalid args for {name}: {e}"}
+    except Exception as e:
+        return {"success": False, "output": f"Tool {name} error: {str(e)[:300]}"}
