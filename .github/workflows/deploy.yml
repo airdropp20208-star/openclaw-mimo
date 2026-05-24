@@ -39,7 +39,9 @@ jobs:
           sudo apt-get install -y -qq ffmpeg imagemagick poppler-utils
 
       - name: Install Python deps
-        run: pip install -q -r requirements.txt
+        run: |
+          pip install -q -r requirements.txt
+          playwright install chromium --with-deps 2>/dev/null || true
 
       - name: Kill old processes
         run: |

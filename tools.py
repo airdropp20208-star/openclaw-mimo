@@ -173,17 +173,42 @@ def file_list(path: str = "/tmp") -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def browse_url(url: str) -> dict[str, Any]:
-    """Fetch a webpage and return text content."""
+    """Fetch a webpage — tries browser-use first, falls back to urllib."""
     if not url:
         return {"success": False, "output": "No URL provided"}
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
-    # Block internal/private URLs
     parsed = urllib.parse.urlparse(url)
     if _is_private_ip(parsed.hostname or ""):
         return {"success": False, "output": "Access denied: internal/private URL blocked"}
     if parsed.scheme == "file":
         return {"success": False, "output": "Access denied: file:// URLs blocked"}
+
+    # Try browser-use for JS-heavy sites
+    try:
+        from browser_use import Browser
+        import asyncio
+
+        async def _fetch():
+            browser = Browser(headless=True)
+            page = await browser.new_page()
+            await page.goto(url, timeout=30000)
+            content = await page.content()
+            title = await page.title()
+            await browser.close()
+            return title, content
+
+        title, html = asyncio.run(_fetch())
+        text = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", html, flags=re.DOTALL)
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()[:5000]
+        return {"success": True, "output": f"Title: {title}\n\n{text}"}
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    # Fallback: simple urllib
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=30) as resp:
