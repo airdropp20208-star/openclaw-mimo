@@ -1,14 +1,20 @@
 #!/bin/bash
 set -e
 
-echo "=== PhantomBot v8 Full Setup ==="
+echo "=== Hermes-OpenManus Multi-Agent System Setup ==="
 
 # System deps
 sudo apt-get update -qq
 sudo apt-get install -y -qq xvfb scrot imagemagick poppler-utils ffmpeg curl jq openssh-server
 
 # Python packages
-pip install -q "markitdown[all]" python-pptx openpyxl python-docx pymupdf anthropic playwright cloakbrowser ui-tars
+pip install -q -r requirements.txt
+
+# Optional: AutoGen for multi-agent coordination
+pip install -q pyautogen 2>/dev/null || echo "AutoGen not installed (optional)"
+
+# Browser automation
+pip install -q playwright 2>/dev/null || true
 playwright install chromium --with-deps 2>/dev/null || true
 
 # Node.js MCP tools
@@ -18,15 +24,10 @@ npm install -g \
   @supabase/mcp-server-supabase \
   @upstash/context7-mcp \
   @colbymchenry/codegraph \
-  @anthropic-ai/mcp-sequential-thinking
+  @anthropic-ai/mcp-sequential-thinking 2>/dev/null || true
 
 # CodeGraph init
 codegraph init -i --yes 2>/dev/null || true
-
-# Clone apps
-git clone https://github.com/hugohe3/ppt-master.git /tmp/ppt-master 2>/dev/null || true
-cd /tmp/ppt-master && pip install -r requirements.txt 2>/dev/null || true
-git clone https://github.com/opencut-app/opencut.git /tmp/opencut 2>/dev/null || true
 
 # SSH tunnel
 curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
@@ -39,3 +40,5 @@ nohup cloudflared tunnel --url ssh://localhost:22 > tunnel.log 2>&1 &
 echo $! > tunnel.pid
 
 echo "=== Setup Complete ==="
+echo "Bot: python main.py"
+echo "Architecture: Hermes Brain + OpenManus Executor + AutoGen Coordinator"

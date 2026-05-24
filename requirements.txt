@@ -1,1 +1,9 @@
-requests
+requests>=2.28.0
+duckduckgo-search>=4.0.0
+markitdown[all]>=0.1.0
+python-pptx>=0.6.21
+openpyxl>=3.1.0
+python-docx>=0.8.11
+pymupdf>=1.23.0
+# Optional: AutoGen multi-agent coordination
+# pyautogen>=0.2.0

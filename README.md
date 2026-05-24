@@ -1,97 +1,132 @@
-<p align="center">
-  <img src="https://img.shields.io/badge/PHANTOM%20NODE-v7.0-purple?style=for-the-badge&labelColor=black" />
-  <img src="https://img.shields.io/badge/DEEPSEEK%20V4-PRO-brightgreen?style=for-the-badge&labelColor=black" />
-  <img src="https://img.shields.io/badge/STATUS-FREE-yellow?style=for-the-badge&labelColor=black" />
-</p>
+# 🧠⚡ Hermes-OpenManus
 
-<h1 align="center"> phantom-node </h1>
+**Multi-Agent AI System** — Kết hợp 3 lớp thông minh: Brain + Executor + Coordinator
 
-<p align="center">
-  <b>⚡ Telegram → Hermes → DeepSeek V4 Pro → Code Execution ⚡</b><br>
-  <sub>Your free VPS for 6 hours — DeepSeek V4 Pro via ds2api (FREE!)</sub>
-</p>
-
----
-
-## 🔥 What is this?
-
-**Phantom Node** turns GitHub Actions into a **free DeepSeek V4 Pro environment** with:
-
-- **ds2api** — DeepSeek Web → OpenAI API gateway
-- **Claude Code** — AI coding assistant (uses DeepSeek as backend)
-- **Hermes** — Telegram bot + agent
-- **Self-healing** — Auto-restarts crashed services
-- **Zero cost** — Runs on GitHub Actions free tier
-
-## ⚡ Architecture
+## 🏗️ Kiến trúc
 
 ```
 ┌─────────────────────────────────────────────────┐
-│                    Telegram                      │
-└───────────────────┬─────────────────────────────┘
-                    │
-                    ▼
-┌─────────────────────────────────────────────────┐
-│              Hermes Gateway                      │
-│     (Routes messages to Claude Code)             │
-└───────────────────┬─────────────────────────────┘
-                    │
-                    ▼
-┌─────────────────────────────────────────────────┐
-│              Claude Code CLI                     │
-│         (AI coding assistant)                    │
-└───────────────────┬─────────────────────────────┘
-                    │
-                    ▼
-┌─────────────────────────────────────────────────┐
-│              ds2api (5001)                       │
-│       (DeepSeek Web → OpenAI API)                │
-└───────────────────┬─────────────────────────────┘
-                    │
-                    ▼
-┌─────────────────────────────────────────────────┐
-│              DeepSeek V4 Pro (FREE!)             │
-└─────────────────────────────────────────────────┘
+│                  Telegram User                   │
+└──────────────────────┬──────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────┐
+│              🎯 Intent Router                    │
+│   Simple Chat → LLM | Task → Executor |         │
+│   Multi-step → Coordinator                      │
+└──────┬───────────────┬──────────────────┬───────┘
+       │               │                  │
+┌──────▼──────┐ ┌──────▼──────┐ ┌────────▼────────┐
+│ 🧠 Hermes   │ │ ⚡ OpenManus │ │ 🎼 AutoGen      │
+│ Brain       │ │ Executor    │ │ Coordinator     │
+│             │ │             │ │ (optional)      │
+│ • Skills    │ │ • Shell     │ │ • Planner       │
+│ • Memory    │ │ • Browser   │ │ • Coder         │
+│ • Context   │ │ • File Ops  │ │ • Critic        │
+│ • Learning  │ │ • Search    │ │ • Executor      │
+│             │ │ • Media     │ │                 │
+└─────────────┘ └─────────────┘ └─────────────────┘
 ```
 
-## 🚀 Quick Start
+## 📁 Cấu trúc
 
-### 1. Fork this repo
+```
+src/
+├── core/
+│   ├── router.py        # 🎯 Intent Router — phân loại yêu cầu
+│   ├── brain.py         # 🧠 Hermes Brain — bộ nhớ + skills
+│   ├── executor.py      # ⚡ OpenManus Executor — thực thi tác vụ
+│   └── coordinator.py   # 🎼 AutoGen Coordinator (tùy chọn)
+├── tools/
+│   ├── shell.py         # Shell execution
+│   ├── browser.py       # Web browsing
+│   ├── file_ops.py      # File operations
+│   ├── search.py        # Web search
+│   └── media.py         # Media conversion
+├── memory/
+│   ├── skills.py        # Skill storage & retrieval
+│   └── context.py       # Conversation context
+├── llm/
+│   └── client.py        # LLM API client (Xiaomi MiMo)
+└── bot/
+    ├── telegram.py      # Telegram bot interface
+    └── handlers.py      # Command handlers
+main.py                  # Entry point
+```
 
-### 2. Add GitHub Secrets
+## 🚀 Cài đặt
 
-- `BOT_TOKEN` — Telegram bot token
-- `DS_EMAIL` — DeepSeek email (optional, has defaults)
-- `DS_PASSWORD` — DeepSeek password (optional, has defaults)
+```bash
+# Clone
+git clone https://github.com/airdropp20208-star/hermes-mimo-by-son.git
+cd hermes-mimo-by-son
 
-### 3. Trigger workflow
+# Setup
+chmod +x setup.sh
+./setup.sh
 
-Go to Actions → Deploy Phantom Node → Run workflow
+# Run
+export BOT_TOKEN="your-telegram-bot-token"
+export API_KEY="your-xiaomi-mimo-api-key"
+python main.py
+```
 
-### 4. Chat on Telegram
+## 🔧 Commands
 
-Message your bot on Telegram. It uses DeepSeek V4 Pro for FREE!
+| Command | Mô tả |
+|---------|-------|
+| `/start` | Hiển thị hướng dẫn |
+| `/search <query>` | Tìm kiếm web |
+| `/convert <file> <fmt>` | Chuyển đổi file |
+| `/browse <url>` | Đọc & tóm tắt trang web |
+| `/analyze <file>` | Phân tích file |
+| `/ppt <text/file>` | Tạo PowerPoint |
+| `/skills` | Xem danh sách skills đã học |
+| `/remember <text>` | Lưu memory |
+| `/recall` | Xem memory |
+| `/mcp` | Danh sách MCP tools |
+| `!cmd <command>` | Chạy shell command |
+| `!upload <path>` | Gửi file |
+| `!scan` | Thông tin hệ thống |
 
-## 📊 Services
+## 🧠 3 Lớp Thông Minh
 
-| Service | Port | Purpose |
-|---------|------|---------|
-| ds2api | `:5001` | DeepSeek → OpenAI API |
-| Hermes | - | Telegram gateway |
-| Claude Code | - | AI coding agent |
+### 1. 🧠 Hermes Brain — "Bộ não ghi nhớ"
+- Lưu trữ **skills** từ mỗi nhiệm vụ thành công
+- Tìm kiếm skills tương tự cho nhiệm vụ mới
+- Theo dõi **context** hội thoại (sliding window)
+- Tự động **học hỏi** từ kết quả
 
-## 🛡️ Features
+### 2. ⚡ OpenManus Executor — "Cánh tay thực thi"
+- Nhận yêu cầu phức tạp, chia nhỏ thành bước
+- Sử dụng **tools**: Shell, Browser, File, Search, Media
+- Tự động **fix lỗi** và retry
+- Trả kết quả có cấu trúc
 
-| Feature | Status |
-|---------|--------|
-| DeepSeek V4 Pro (FREE) | ✅ |
-| OpenAI API compat | ✅ |
-| Telegram bot | ✅ |
-| Claude Code integration | ✅ |
-| Self-healing | ✅ |
-| SSH tunnel | ✅ |
-| Auto-recovery | ✅ |
+### 3. 🎼 AutoGen Coordinator — "Nhạc trưởng" (tùy chọn)
+- Phân phối công việc giữa nhiều agent
+- Planner → Coder → Critic → Executor
+- Fallback về single-agent nếu không có autogen
 
-## 📜 License
+## 🔑 Environment Variables
 
-MIT License
+| Variable | Required | Mô tả |
+|----------|----------|-------|
+| `BOT_TOKEN` | ✅ | Telegram Bot Token |
+| `API_KEY` | ✅ | Xiaomi MiMo API Key |
+| `API_KEYS` | ❌ | Additional keys (comma-separated, for rotation) |
+| `API_BASE` | ❌ | API Base URL (default: https://api.xiaomimimo.com/v1) |
+| `MODEL` | ❌ | Model name (default: mimo-v2.5) |
+| `ALLOWED_CHATS` | ❌ | Allowed chat IDs (comma-separated) |
+
+## 📊 Tech Stack
+
+- **LLM**: Xiaomi MiMo v2.5 (OpenAI-compatible API)
+- **Language**: Python 3.12
+- **Bot**: Telegram Bot API (polling)
+- **Tools**: Shell, Playwright, ffmpeg, ImageMagick, markitdown
+- **Memory**: JSON file storage
+- **Optional**: AutoGen (multi-agent), Hermes Agent (skills)
+
+## 📄 License
+
+MIT

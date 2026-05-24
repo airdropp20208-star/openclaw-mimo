@@ -21,3 +21,11 @@ __pycache__/
 .env
 __pycache__/
 *.pyc
+
+# Runtime
+*.pid
+*.log
+tunnel.log
+bot.log
+__pycache__/
+*.pyc
