@@ -41,7 +41,7 @@ DESTRUCTIVE_PATTERNS: list[str] = [
 
 
 def _is_blocked(command: str) -> tuple[bool, str]:
-    """Check if a command contains blocked patterns."""
+    """Check if a command contains blocked patterns or injection attempts."""
     normalized = command.lower().strip()
     for pattern in BLOCKED_COMMANDS:
         if pattern.lower() in normalized:
@@ -49,6 +49,10 @@ def _is_blocked(command: str) -> tuple[bool, str]:
     for pattern in DESTRUCTIVE_PATTERNS:
         if pattern.lower() in normalized:
             return True, f"Potentially destructive command detected: {pattern}"
+    # Log potentially unsafe shell characters for auditing
+    for char in ("$(", "`", "&&", "||"):
+        if char in command:
+            logger.warning("Potentially unsafe shell character '%s' in command: %s", char, command[:100])
     return False, ""
 
 
@@ -105,6 +109,7 @@ def execute(
     stdout = ""
     stderr = ""
     exit_code = -1
+    proc = None
 
     try:
         logger.info("Executing: %s (timeout=%ds)", command[:200], timeout)
@@ -136,8 +141,16 @@ def execute(
         stderr = f"Permission denied: {exc}"
         exit_code = -1
     except Exception as exc:
+        logger.error("Unexpected error executing command '%s': %s", command[:100], exc)
         stderr = f"Unexpected error: {exc}"
         exit_code = -1
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
     # Truncate very long output
     max_output = 100_000

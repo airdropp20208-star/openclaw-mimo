@@ -232,8 +232,8 @@ class TelegramBot:
         """Send a chat action (typing, uploading_photo, etc.)."""
         try:
             self.tg_api("sendChatAction", {"chat_id": chat_id, "action": action})
-        except Exception:
-            pass  # Non-critical
+        except Exception as exc:
+            logger.debug("Non-critical sendChatAction failed for %d: %s", chat_id, exc)
 
     def send_document(self, chat_id: int, file_path: str, caption: str = "") -> None:
         """Upload a file as a document using multipart form data."""

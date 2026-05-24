@@ -146,13 +146,15 @@ def health() -> Response:
     try:
         llm = _get_llm()
         llm_healthy = len(llm.api_keys) > 0
-    except Exception:
+    except Exception as exc:
+        logger.warning("Health check: LLM init failed: %s", exc)
         llm_healthy = False
 
     try:
         learner = _get_skills_learner()
         skill_count = len(learner.list_skills())
-    except Exception:
+    except Exception as exc:
+        logger.warning("Health check: skills learner init failed: %s", exc)
         skill_count = 0
 
     return jsonify({
@@ -282,6 +284,7 @@ def rag_rebuild() -> Response:
                             )
                             indexed += 1
                     except Exception:
+                        logger.debug("Failed to index file %s during RAG rebuild", fpath)
                         errors += 1
 
         rag.persist()

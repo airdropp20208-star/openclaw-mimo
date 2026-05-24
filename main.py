@@ -149,7 +149,7 @@ def _cleanup_pid_file(pid_path: Path) -> None:
             if stored == str(os.getpid()):
                 pid_path.unlink()
     except Exception:
-        pass
+        logging.warning("Could not remove PID file on cleanup", exc_info=True)
 
 
 def check_existing_process() -> bool:

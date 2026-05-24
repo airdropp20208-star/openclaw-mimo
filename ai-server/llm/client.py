@@ -188,8 +188,8 @@ class LLMClient:
 
             try:
                 req = self._build_request(path, payload, key)
-                resp = urllib.request.urlopen(req, timeout=self.timeout)
-                raw = resp.read().decode("utf-8")
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    raw = resp.read().decode("utf-8")
                 result = json.loads(raw)
 
                 self._record_key_success(key)
@@ -210,8 +210,8 @@ class LLMClient:
                         for remaining_key in self._all_keys():
                             try:
                                 req2 = self._build_request(path, payload, remaining_key)
-                                resp2 = urllib.request.urlopen(req2, timeout=self.timeout)
-                                raw2 = resp2.read().decode("utf-8")
+                                with urllib.request.urlopen(req2, timeout=self.timeout) as resp2:
+                                    raw2 = resp2.read().decode("utf-8")
                                 result2 = json.loads(raw2)
                                 self._record_key_success(remaining_key)
                                 cache_key = self._cache_key(path, payload)
@@ -265,28 +265,28 @@ class LLMClient:
         payload_copy["stream"] = True
         try:
             req = self._build_request(path, payload_copy, key)
-            resp = urllib.request.urlopen(req, timeout=self.timeout)
-            self._record_key_success(key)
-            buffer = ""
-            while True:
-                chunk = resp.read(1024)
-                if not chunk:
-                    break
-                buffer += chunk.decode("utf-8")
-                while "\n" in buffer:
-                    line, buffer = buffer.split("\n", 1)
-                    line = line.strip()
-                    if not line or line == "data: [DONE]":
-                        continue
-                    if line.startswith("data: "):
-                        try:
-                            event = json.loads(line[6:])
-                            delta = event.get("choices", [{}])[0].get("delta", {})
-                            content = delta.get("content", "")
-                            if content:
-                                yield content
-                        except json.JSONDecodeError:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                self._record_key_success(key)
+                buffer = ""
+                while True:
+                    chunk = resp.read(1024)
+                    if not chunk:
+                        break
+                    buffer += chunk.decode("utf-8")
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
+                        line = line.strip()
+                        if not line or line == "data: [DONE]":
                             continue
+                        if line.startswith("data: "):
+                            try:
+                                event = json.loads(line[6:])
+                                delta = event.get("choices", [{}])[0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    yield content
+                            except json.JSONDecodeError:
+                                continue
         except Exception:
             logger.exception("Streaming request failed")
             self._record_key_failure(key, "Stream failed")

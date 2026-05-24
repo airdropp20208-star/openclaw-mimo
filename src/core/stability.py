@@ -473,6 +473,7 @@ class HealthChecker:
             msg = f"{used_percent:.1f}% used (threshold: {max_percent}%)"
             return healthy, msg
         except Exception as exc:
+            logger.warning("Cannot read memory info: %s", exc)
             return False, f"Cannot read memory info: {exc}"
 
     @staticmethod
@@ -759,6 +760,7 @@ class MemoryMonitor:
             page_size = os.sysconf("SC_PAGE_SIZE")
             return resident_pages * page_size
         except Exception:
+            logger.debug("MemoryMonitor: failed to read /proc/self/statm")
             return 0
 
     def _sample(self) -> int:

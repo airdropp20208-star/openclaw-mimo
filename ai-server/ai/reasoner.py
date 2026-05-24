@@ -220,6 +220,7 @@ def reason_with_rag(query: str, context: dict[str, Any] | None = None) -> dict[s
         try:
             rag_context = _get_rag_context(query)
         except Exception:
+            logger.error("RAG-enhanced reasoning failed during RAG context retrieval")
             pass
 
     # Merge RAG context into the context dict

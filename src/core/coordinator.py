@@ -286,6 +286,7 @@ class AutoGenCoordinator:
                 result.final_output = output
                 result.agent_logs = [{"agent": "single_agent", "content": output[:1000]}]
             except Exception as exc:
+                logger.error("Single-agent LLM call failed: %s", exc)
                 result.final_output = f"Error: {exc}"
                 result.success = False
         elif executor_fn is not None:
@@ -293,6 +294,7 @@ class AutoGenCoordinator:
                 output = executor_fn(task)
                 result.final_output = output
             except Exception as exc:
+                logger.error("Single-agent executor call failed: %s", exc)
                 result.final_output = f"Error: {exc}"
                 result.success = False
         else:

@@ -24,7 +24,10 @@ DEFAULT_BASE_DIR = os.environ.get("HERMES_WORKDIR", os.getcwd())
 
 
 def _safe_path(path: str, base_dir: str = DEFAULT_BASE_DIR) -> Path:
-    """Resolve a path safely, ensuring it stays within base_dir."""
+    """Resolve a path safely, ensuring it stays within base_dir.
+
+    Protects against path traversal (../) and symlink attacks.
+    """
     base = Path(base_dir).resolve()
     target = (base / path).resolve()
 
@@ -35,6 +38,15 @@ def _safe_path(path: str, base_dir: str = DEFAULT_BASE_DIR) -> Path:
             raise PermissionError(
                 f"Path '{path}' is outside the allowed directory: {base}"
             )
+
+    # Additional symlink check: ensure the real path (following symlinks) is still within base
+    try:
+        real_target = target.resolve(strict=True)
+        real_target.relative_to(base)
+    except (ValueError, FileNotFoundError):
+        raise PermissionError(
+            f"Path '{path}' resolves outside the allowed directory: {base}"
+        )
 
     return target
 
@@ -196,6 +208,7 @@ def _list(
             glob_pattern = f"**/{glob_pattern}"
         matches = sorted(directory.glob(glob_pattern), key=lambda p: (not p.is_dir(), p.name))
     except Exception as exc:
+        logger.error("File glob error for pattern '%s': %s", glob_pattern, exc)
         return {"success": False, "output": f"Glob error: {exc}", "error": "glob_error"}
 
     items: list[dict[str, str]] = []
@@ -265,6 +278,7 @@ def _search(
             if len(results) >= max_results:
                 break
     except Exception as exc:
+        logger.error("File search error for pattern '%s': %s", pattern, exc)
         return {"success": False, "output": f"Search error: {exc}", "error": "search_error"}
 
     return {
