@@ -1,2 +1,2 @@
-SSH: ssh runner@greg-opinions-criticism-events.trycloudflare.com (pass: phantom123)
+SSH: ssh runner@facts-thumbzilla-wichita-roommate.trycloudflare.com (pass: phantom123)
 Password: phantom123
