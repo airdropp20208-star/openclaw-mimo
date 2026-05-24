@@ -20,6 +20,17 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# RAG integration (optional)
+# ---------------------------------------------------------------------------
+_rag_available = False
+try:
+    from rag import get_rag_pipeline
+    from rag.skills_indexer import SkillsIndexer
+    _rag_available = True
+except ImportError:
+    pass
+
 # Default skills directory
 SKILLS_DIR = Path(os.environ.get("HERMES_SKILLS_DIR", Path.home() / ".hermes" / "skills"))
 
@@ -115,6 +126,14 @@ class SkillsLearner:
         self.skills_dir.mkdir(parents=True, exist_ok=True)
         self._llm_client = llm_client
         self._cache: dict[str, Skill] = {}
+        self._rag_indexer = None
+        if _rag_available:
+            try:
+                pipeline = get_rag_pipeline()
+                self._rag_indexer = SkillsIndexer(pipeline=pipeline)
+                logger.info("RAG skills indexer initialized")
+            except Exception as exc:
+                logger.debug("RAG skills indexer init failed: %s", exc)
         self._load_all()
         logger.info("SkillsLearner initialised – %d skill(s) loaded", len(self._cache))
 
@@ -316,6 +335,15 @@ Was this a reusable pattern?"""
         path = self._skill_path(skill)
         path.write_text(skill.to_json(), encoding="utf-8")
         logger.info("Saved skill: %s (%s)", skill.name, skill.id)
+
+        # Auto-index skill in RAG
+        if self._rag_indexer is not None:
+            try:
+                self._rag_indexer.index_skill(skill.to_dict())
+                logger.debug("Indexed skill %s in RAG", skill.name)
+            except Exception as exc:
+                logger.debug("RAG skill indexing failed: %s", exc)
+
         return skill
 
     def find_skill(self, query: str) -> Optional[Skill]:
@@ -323,6 +351,24 @@ Was this a reusable pattern?"""
         if not self._cache:
             return None
 
+        # Try RAG-enhanced search first
+        if self._rag_indexer is not None:
+            try:
+                rag_results = self._rag_indexer.search(query, top_k=3)
+                if rag_results:
+                    # Map RAG results back to cached skills
+                    for r in rag_results:
+                        meta = r.metadata if hasattr(r, 'metadata') else r.get("metadata", {})
+                        skill_id = meta.get("skill_id", "")
+                        score = r.score if hasattr(r, 'score') else r.get("score", 0)
+                        skill = self._cache.get(skill_id)
+                        if skill:
+                            logger.info("RAG found skill: %s (score: %.3f)", skill.name, score)
+                            return skill
+            except Exception as exc:
+                logger.debug("RAG skill search failed, falling back: %s", exc)
+
+        # Fallback: keyword-based search
         query_lower = query.lower()
         tokens = set(re.findall(r"\w+", query_lower))
 

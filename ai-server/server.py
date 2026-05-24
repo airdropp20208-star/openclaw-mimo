@@ -36,6 +36,22 @@ from typing import Any
 from flask import Flask, Response, jsonify, request
 
 # ---------------------------------------------------------------------------
+# RAG imports (optional, gracefully handled)
+# ---------------------------------------------------------------------------
+_rag_available = False
+_rag_pipeline = None
+_skills_indexer = None
+_memory_indexer = None
+
+try:
+    from rag import get_rag_pipeline
+    from rag.skills_indexer import SkillsIndexer as _SkillsIndexer
+    from rag.memory_indexer import MemoryIndexer as _MemoryIndexer
+    _rag_available = True
+except ImportError:
+    pass
+
+# ---------------------------------------------------------------------------
 # Logging setup
 # ---------------------------------------------------------------------------
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -56,6 +72,23 @@ app = Flask(__name__)
 # ---------------------------------------------------------------------------
 _llm_client = None
 _skills_learner = None
+
+
+def _get_rag():
+    global _rag_pipeline, _skills_indexer, _memory_indexer, _rag_available
+    if not _rag_available:
+        return None
+    if _rag_pipeline is None:
+        try:
+            _rag_pipeline = get_rag_pipeline()
+            _skills_indexer = _SkillsIndexer(pipeline=_rag_pipeline)
+            _memory_indexer = _MemoryIndexer(pipeline=_rag_pipeline)
+            logger.info("RAG pipeline initialized")
+        except Exception as exc:
+            logger.warning("RAG pipeline init failed: %s", exc)
+            _rag_available = False
+            return None
+    return _rag_pipeline
 
 
 def _get_llm():
@@ -125,11 +158,161 @@ def health() -> Response:
     return jsonify({
         "status": "ok",
         "service": "hermes-ai-server",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "llm_available": llm_healthy,
         "skills_count": skill_count,
+        "rag_available": _rag_available and _rag_pipeline is not None,
         "uptime": time.time(),
     })
+
+
+# ---------------------------------------------------------------------------
+# POST /rag/index — Index a document
+# ---------------------------------------------------------------------------
+@app.route("/rag/index", methods=["POST"])
+def rag_index() -> Response:
+    """Index a document into the RAG vector store.
+
+    Request body:
+        {
+            "id": "document_id",
+            "text": "document content",
+            "metadata": { ... }   // optional
+        }
+    """
+    rag = _get_rag()
+    if rag is None:
+        return _err("RAG not available", 503, "rag_unavailable")
+
+    data, err = _parse_json_body()
+    if err:
+        return _err(err)
+
+    doc_id = data.get("id", "")
+    text = data.get("text", "")
+    if not doc_id or not text:
+        return _err("'id' and 'text' are required")
+
+    try:
+        doc_id = rag.index_document(text=text, metadata=data.get("metadata"))
+        return _ok({"doc_id": doc_id}, "Document indexed")
+    except Exception as exc:
+        logger.exception("RAG index failed")
+        return _err(f"Index failed: {exc}", 500, "index_error")
+
+
+# ---------------------------------------------------------------------------
+# POST /rag/search — Search similar documents
+# ---------------------------------------------------------------------------
+@app.route("/rag/search", methods=["POST"])
+def rag_search() -> Response:
+    """Search the RAG index for similar documents.
+
+    Request body:
+        {
+            "query": "search query",
+            "top_k": 5,             // optional
+            "filter": { ... }       // optional metadata filter
+        }
+    """
+    rag = _get_rag()
+    if rag is None:
+        return _err("RAG not available", 503, "rag_unavailable")
+
+    data, err = _parse_json_body()
+    if err:
+        return _err(err)
+
+    query = data.get("query", "")
+    if not query:
+        return _err("'query' is required")
+
+    try:
+        results = rag.retrieve(query, top_k=data.get("top_k", 5))
+        result_dicts = [r.to_dict() for r in results]
+        return _ok({"results": result_dicts, "count": len(result_dicts)})
+    except Exception as exc:
+        logger.exception("RAG search failed")
+        return _err(f"Search failed: {exc}", 500, "search_error")
+
+
+# ---------------------------------------------------------------------------
+# POST /rag/rebuild — Rebuild index from files
+# ---------------------------------------------------------------------------
+@app.route("/rag/rebuild", methods=["POST"])
+def rag_rebuild() -> Response:
+    """Rebuild the RAG index from a directory of files.
+
+    Request body:
+        {
+            "directory": "/path/to/files",  // optional, defaults to workdir
+            "extensions": [".txt", ".md"]   // optional, file extensions to index
+        }
+    """
+    rag = _get_rag()
+    if rag is None:
+        return _err("RAG not available", 503, "rag_unavailable")
+
+    data, err = _parse_json_body()
+    if err:
+        return _err(err)
+
+    try:
+        directory = data.get("directory", os.environ.get("HERMES_WORKDIR", "."))
+        extensions = data.get("extensions", [".txt", ".md", ".py", ".json", ".yaml", ".yml"])
+
+        rag.clear()
+        indexed = 0
+        errors = 0
+
+        for root, dirs, files in os.walk(directory):
+            # Skip hidden dirs and common excludes
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in {"node_modules", "__pycache__", "venv"}]
+
+            for fname in files:
+                fpath = Path(root) / fname
+                if fpath.suffix.lower() in extensions and fpath.stat().st_size < 1_000_000:
+                    try:
+                        text = fpath.read_text(encoding="utf-8", errors="ignore")
+                        if text.strip():
+                            doc_id = str(fpath.relative_to(directory)).replace(os.sep, "/")
+                            rag.index_document(
+                                text=text,
+                                metadata={"source": str(fpath), "filename": doc_id},
+                            )
+                            indexed += 1
+                    except Exception:
+                        errors += 1
+
+        rag.persist()
+        stats = rag.stats()
+        return _ok({
+            "indexed": indexed,
+            "errors": errors,
+            "stats": stats,
+        }, "Index rebuilt")
+
+    except Exception as exc:
+        logger.exception("RAG rebuild failed")
+        return _err(f"Rebuild failed: {exc}", 500, "rebuild_error")
+
+
+# ---------------------------------------------------------------------------
+# GET /rag/stats — Index statistics
+# ---------------------------------------------------------------------------
+@app.route("/rag/stats", methods=["GET"])
+def rag_stats() -> Response:
+    """Get RAG index statistics."""
+    rag = _get_rag()
+    if rag is None:
+        return _err("RAG not available", 503, "rag_unavailable")
+
+    try:
+        stats = rag.stats()
+        return _ok(stats)
+    except Exception as exc:
+        logger.exception("RAG stats failed")
+        return _err(f"Stats failed: {exc}", 500, "stats_error")
 
 
 # ---------------------------------------------------------------------------
@@ -409,6 +592,13 @@ def internal_error(e) -> Response:
 # ---------------------------------------------------------------------------
 def create_app() -> Flask:
     """Create and configure the Flask application."""
+    # Initialize RAG pipeline eagerly on app creation
+    if _rag_available:
+        try:
+            _get_rag()
+            logger.info("RAG pipeline initialized during app creation")
+        except Exception as exc:
+             logger.warning("RAG init during app creation failed: %s", exc)
     return app
 
 

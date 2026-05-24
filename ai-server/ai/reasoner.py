@@ -12,6 +12,16 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# RAG integration (optional)
+# ---------------------------------------------------------------------------
+_rag_available = False
+try:
+    from rag import get_rag_pipeline
+    _rag_available = True
+except ImportError:
+    pass
+
 # Available tools and their descriptions for the LLM
 TOOL_CATALOG = {
     "shell": {
@@ -42,8 +52,8 @@ TOOL_CATALOG = {
 }
 
 
-def _build_reasoning_prompt(task: str, context: dict[str, Any] | None = None) -> str:
-    """Build a system prompt for task reasoning."""
+def _build_reasoning_prompt(task: str, context: dict[str, Any] | None = None, rag_context: str = "") -> str:
+    """Build a system prompt for task reasoning, optionally enriched with RAG context."""
     tools_desc = "\n".join(
         f"- {t['name']}: {t['description']} (best for: {', '.join(t['best_for'])})"
         for t in TOOL_CATALOG.values()
@@ -52,10 +62,14 @@ def _build_reasoning_prompt(task: str, context: dict[str, Any] | None = None) ->
     if context:
         context_str = f"\nAdditional context: {context}"
 
+    rag_str = ""
+    if rag_context:
+        rag_str = f"\nRelevant past experiences (use these to inform your plan):\n{rag_context}"
+
     return f"""You are an AI task planner. Analyze the user's task and create an execution plan.
 
 Available tools:
-{tools_desc}{context_str}
+{tools_desc}{context_str}{rag_str}
 
 Respond with a JSON object:
 {{
@@ -99,7 +113,17 @@ def reason(task: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
 
     logger.info("Reasoning about task: %s", task[:100])
 
-    system_prompt = _build_reasoning_prompt(task, context)
+    # Retrieve RAG context if available
+    rag_context = ""
+    if _rag_available:
+        try:
+            rag_context = _get_rag_context(task)
+            if rag_context:
+                logger.info("Retrieved RAG context (%d chars)", len(rag_context))
+        except Exception as exc:
+            logger.debug("RAG context retrieval failed: %s", exc)
+
+    system_prompt = _build_reasoning_prompt(task, context, rag_context)
     user_prompt = f"Task: {task}"
 
     try:
@@ -118,11 +142,93 @@ def reason(task: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
         # Validate and clean the plan
         plan = _validate_plan(result)
         logger.info("Generated plan with %d steps", len(plan.get("steps", [])))
+
+        # Index this task in memory for future retrieval
+        if _rag_available:
+            try:
+                _index_completed_task(task, plan)
+            except Exception as exc:
+                logger.debug("RAG task indexing failed: %s", exc)
+
         return plan
 
     except Exception as exc:
         logger.error("Reasoning failed: %s", exc)
         return _simple_fallback_plan(task)
+
+
+def _get_rag_context(task: str) -> str:
+    """Retrieve relevant context from RAG for a task."""
+    if not _rag_available:
+        return ""
+    try:
+        pipeline = get_rag_pipeline()
+        results = pipeline.retrieve(task, top_k=3)
+        if not results:
+            return ""
+        context_parts = ["Similar past tasks:"]
+        for i, r in enumerate(results, 1):
+            score = r.score
+            text = r.text[:200]
+            context_parts.append(f"{i}. (relevance: {score:.2f}) {text}")
+        return "\n".join(context_parts)
+    except Exception as exc:
+        logger.debug("RAG context retrieval error: %s", exc)
+        return ""
+
+
+def _index_completed_task(task: str, plan: dict[str, Any]) -> None:
+    """Index a completed task plan for future RAG retrieval."""
+    if not _rag_available:
+        return
+    try:
+        pipeline = get_rag_pipeline()
+        # Build searchable text from task and plan
+        parts = [task]
+        if plan and "steps" in plan:
+            for step in plan["steps"]:
+                desc = step.get("description", "")
+                tool = step.get("tool", "")
+                if desc:
+                    parts.append(f"Step: {desc}" + (f" (tool: {tool})" if tool else ""))
+        text = " | ".join(p for p in parts if p)
+        pipeline.index_document(
+            text=text,
+            metadata={"type": "task", "source": "reasoner"},
+        )
+    except Exception as exc:
+        logger.debug("RAG task indexing error: %s", exc)
+
+
+def reason_with_rag(query: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Reason with explicit RAG context retrieval.
+
+    This function forces RAG context retrieval before reasoning,
+    even if the global RAG integration is disabled.
+
+    Args:
+        query: The task description.
+        context: Optional additional context.
+
+    Returns:
+        A structured plan enriched with RAG context.
+    """
+    logger.info("RAG-enhanced reasoning for: %s", query[:100])
+
+    rag_context = ""
+    if _rag_available:
+        try:
+            rag_context = _get_rag_context(query)
+        except Exception:
+            pass
+
+    # Merge RAG context into the context dict
+    merged_context = dict(context) if context else {}
+    if rag_context:
+        merged_context["rag_context"] = rag_context
+
+    plan = reason(query, merged_context)
+    return plan
 
 
 def _simple_fallback_plan(task: str) -> dict[str, Any]:
