@@ -19,7 +19,8 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-SKILLS_FILE = "/tmp/hermes_skills.json"
+_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+SKILLS_FILE = os.path.join(_DATA_DIR, "hermes_skills.json")
 
 
 class Skill:
@@ -154,6 +155,7 @@ class Learner:
 
     def _save(self) -> None:
         try:
+            os.makedirs(_DATA_DIR, exist_ok=True)
             data = {}
             try:
                 with open(SKILLS_FILE, encoding="utf-8") as f:

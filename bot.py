@@ -3,9 +3,9 @@
 Hermes Bot — Autonomous AI agent with OpenManus tools.
 
 3 capabilities:
-1. Tool-using — execute tools
-2. Autonomous — self-plan, auto-chain steps
-3. Learning — extract skills from successful tasks
+1. Tool-using — execute commands, browse, search, convert, generate PPT
+2. Autonomous — self-plan goals, break into subtasks, track progress
+3. Learning — extract patterns from successful tasks, build skill library
 
 Usage:
     BOT_TOKEN=xxx API_KEY=xxx python bot.py
@@ -51,10 +51,12 @@ logger = logging.getLogger("hermes-bot")
 
 _shutdown = False
 
+
 def _signal_handler(signum, frame):
     global _shutdown
     logger.info("Received signal %s, shutting down...", signum)
     _shutdown = True
+
 
 # ---------------------------------------------------------------------------
 # Telegram API
@@ -127,12 +129,14 @@ def send_document(chat_id: int, file_path: str, caption: str = "") -> None:
 
 MEMORY_FILE = "/tmp/hermes_memory.json"
 
+
 def load_memory() -> dict:
     try:
         with open(MEMORY_FILE, encoding="utf-8") as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
+
 
 def save_memory(data: dict) -> None:
     try:
@@ -180,18 +184,47 @@ HELP = """🤖 *Hermes Agent v2* — Autonomous AI
 
 *3 capabilities:*
 🔧 Tool-using — execute commands, browse, search, convert files
-🧠 Autonomous — self-plan, auto-chain multi-step tasks
+🧠 Autonomous — self-plan goals, auto-chain multi-step tasks
 📚 Learning — remembers successful skills for reuse
 
 *Commands:*
 /start — Help
 /clear — Clear history
+
+*🎯 Goals:*
+/goals — View all goals
+/goal add <description> — Set a new goal (auto-decomposed)
+/goal done <subtask_id> — Mark subtask complete
+/goal delete <goal_id> — Delete a goal
+/goal pause <goal_id> — Pause a goal
+/goal resume <goal_id> — Resume a goal
+/actions — Get next recommended actions
+
+*📚 Learning:*
 /skills — List learned skills
-/remember <text> — Save memory
+/skill <id> — View skill detail
+/stats — Learning statistics
+
+*🧠 Memory:*
+/remember <text> — Save to memory
 /recall — View memory
 /health — System info
 
 *Just ask me anything — I plan and execute automatically!*"""
+
+
+# ---------------------------------------------------------------------------
+# Goal command parser
+# ---------------------------------------------------------------------------
+
+def parse_goal_command(text: str) -> tuple[str, str]:
+    """Parse '/goal <action> <args>' → (action, args)."""
+    parts = text.split(maxsplit=2)
+    if len(parts) >= 3:
+        return parts[1].lower(), parts[2]
+    elif len(parts) == 2:
+        return parts[1].lower(), ""
+    return "", ""
 
 
 # ---------------------------------------------------------------------------
@@ -220,10 +253,14 @@ def main():
         api_keys=_key_pool,
         api_base=API_BASE,
         model=MODEL,
+        autonomous_mode=True,
+        learning_mode=True,
     )
 
     logger.info("=" * 50)
-    logger.info("Hermes Agent v2 — model: %s, skills: %d", MODEL, len(agent._skills))
+    logger.info("Hermes Agent v2 — model: %s, autonomous: on, learning: on", MODEL)
+    logger.info("API keys: %d", len(_key_pool))
+    logger.info("Allowed chats: %s", allowed or "all")
     logger.info("=" * 50)
 
     # Get initial offset
@@ -278,6 +315,7 @@ def main():
                 if allowed and chat_id not in allowed:
                     continue
 
+                # Rate limiting
                 now = time.time()
                 if chat_id in last_response and now - last_response[chat_id] < RATE_LIMIT:
                     continue
@@ -297,34 +335,86 @@ def main():
                     continue
 
                 if lower == "/health":
-                    skills = agent.list_skills()
                     chat_count = len(agent._history)
-                    active_plans = len(agent._plans)
+                    planner = agent._get_planner(chat_id)
+                    active_goals = len(planner.get_active_goals())
                     send(chat_id, (
                         f"🟢 *Hermes Agent v2*\n"
                         f"Model: `{MODEL}`\n"
                         f"Keys: `{len(_key_pool)}`\n"
+                        f"API: `{API_BASE}`\n"
                         f"Active chats: `{chat_count}`\n"
-                        f"Active plans: `{active_plans}`\n"
-                        f"Learned skills: `{len(skills)}`"
+                        f"Active goals: `{active_goals}`\n"
+                        f"Learning: `on`\n"
+                        f"Autonomous: `on`"
                     ))
                     continue
 
-                if lower == "/skills":
-                    skills = agent.list_skills()
-                    if not skills:
-                        send(chat_id, "No skills learned yet.\nI learn automatically from successful tasks!")
-                        continue
-                    lines = [f"📚 *Learned Skills ({len(skills)}):\n"]
-                    for s in skills[:20]:
-                        name = s.get("name", "unknown")
-                        desc = s.get("description", "")[:80]
-                        cat = s.get("category", "")
-                        count = s.get("success_count", 1)
-                        lines.append(f"• `{name}` ({cat}) — {desc} [×{count}]")
-                    send(chat_id, "\n".join(lines))
+                # --- Goal commands ---
+                if lower in ("/goals", "/goal"):
+                    send(chat_id, agent.get_goals(chat_id))
                     continue
 
+                if lower.startswith("/goal "):
+                    action, args = parse_goal_command(text)
+                    if action == "add":
+                        if not args:
+                            send(chat_id, "Usage: /goal add <description>")
+                        else:
+                            send(chat_id, "🤔 Planning...")
+                            response = agent.add_goal(chat_id, args)
+                            send(chat_id, response)
+                    elif action == "done":
+                        if not args:
+                            send(chat_id, "Usage: /goal done <subtask_id>")
+                        else:
+                            send(chat_id, agent.complete_subtask(chat_id, args))
+                    elif action == "delete":
+                        if not args:
+                            send(chat_id, "Usage: /goal delete <goal_id>")
+                        else:
+                            send(chat_id, agent.delete_goal(chat_id, args))
+                    elif action == "pause":
+                        if not args:
+                            send(chat_id, "Usage: /goal pause <goal_id>")
+                        else:
+                            send(chat_id, agent.pause_goal(chat_id, args))
+                    elif action == "resume":
+                        if not args:
+                            send(chat_id, "Usage: /goal resume <goal_id>")
+                        else:
+                            send(chat_id, agent.resume_goal(chat_id, args))
+                    else:
+                        send(chat_id, f"Unknown action: {action}\nUse: add, done, delete, pause, resume")
+                    continue
+
+                if lower == "/actions":
+                    send(chat_id, "🤔 Analyzing goals...")
+                    send(chat_id, agent.get_next_actions(chat_id))
+                    continue
+
+                # --- Learning commands ---
+                if lower == "/skills":
+                    send(chat_id, agent.get_skills(chat_id))
+                    continue
+
+                if lower.startswith("/skill "):
+                    skill_id = text.split(maxsplit=1)[1].strip()
+                    send(chat_id, agent.get_skill(chat_id, skill_id))
+                    continue
+
+                if lower == "/stats":
+                    send(chat_id, agent.get_learning_stats(chat_id))
+                    continue
+
+                if lower == "/learn":
+                    # Force learn from recent history
+                    send(chat_id, "🧠 Analyzing recent tasks...")
+                    stats = agent.get_learning_stats(chat_id)
+                    send(chat_id, stats)
+                    continue
+
+                # --- Memory commands ---
                 if lower.startswith("/remember"):
                     content = text.replace("/remember", "").strip()
                     if not content:
@@ -354,26 +444,21 @@ def main():
                     send(chat_id, "🧠 Memory:\n\n" + "\n".join(lines))
                     continue
 
-                # --- Autonomous agent processing ---
+                # --- Agent processing ---
                 send_chat_action(chat_id)
-
-                # Progress callback for multi-step tasks
-                def progress(step, total, desc):
-                    try:
-                        send_chat_action(chat_id)
-                        logger.info("Progress: step %d/%d — %s", step, total, desc)
-                    except Exception:
-                        pass
-
                 try:
-                    agent.cleanup_old_chats(max_chats=100)
-                    response = agent.process(chat_id, text, progress_fn=progress)
+                    removed = agent.cleanup_old_chats(max_chats=100)
+                    if removed:
+                        logger.info("Cleaned up %d old chat histories", removed)
+
+                    response = agent.process(chat_id, text)
                     send(chat_id, response)
                 except Exception as e:
                     logger.exception("Agent error for chat %d", chat_id)
                     send(chat_id, "⚠️ Error processing your request. Try again.")
 
         except KeyboardInterrupt:
+            logger.info("Interrupted, shutting down...")
             break
         except Exception as e:
             poll_errors += 1
