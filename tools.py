@@ -252,6 +252,44 @@ def web_search(query: str) -> dict[str, Any]:
         return {"success": False, "output": f"Search error: {str(e)[:300]}"}
 
 
+def pandas_exec(code: str, csv_path: Optional[str] = None) -> dict[str, Any]:
+    """Execute Python code with pandas for data analysis."""
+    try:
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        import io
+
+        # Create a safe execution environment
+        loc = {"pd": pd, "plt": plt}
+        if csv_path and os.path.exists(csv_path):
+            loc["df"] = pd.read_csv(csv_path)
+        
+        # Capture output
+        output = io.StringIO()
+        import sys
+        old_stdout = sys.stdout
+        sys.stdout = output
+        
+        try:
+            exec(code, {}, loc)
+            sys.stdout = old_stdout
+            res = output.getvalue()
+            
+            # Check for plots
+            if plt.get_fignums():
+                plot_path = f"/tmp/plot_{int(time.time())}.png"
+                plt.savefig(plot_path)
+                plt.close()
+                return {"success": True, "output": res or "Code executed successfully", "file": plot_path}
+                
+            return {"success": True, "output": res or "Code executed successfully"}
+        except Exception as e:
+            sys.stdout = old_stdout
+            return {"success": False, "output": str(e)}
+    except Exception as e:
+        return {"success": False, "output": f"Pandas error: {e}"}
+
+
 # ---------------------------------------------------------------------------
 # File conversion
 # ---------------------------------------------------------------------------
@@ -436,6 +474,10 @@ TOOLS: dict[str, dict[str, Any]] = {
     "tool_discover": {
         "fn": lambda: {"success": True, "output": "\n".join(os.listdir("tools_extra")) if os.path.exists("tools_extra") else "No extra tools found."},
         "description": "List all dynamically created tools in tools_extra/.",
+    },
+    "data_analyze": {
+        "fn": pandas_exec,
+        "description": "Analyze data using pandas. Args: {code: str, csv_path?: str}. Use 'df' for the dataframe if csv_path is provided.",
     },
 }
 
