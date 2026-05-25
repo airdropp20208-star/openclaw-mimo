@@ -429,14 +429,34 @@ TOOLS: dict[str, dict[str, Any]] = {
         "description": "Manage autonomous goals. action: 'add_goal' (desc, priority), 'complete_subtask' (subtask_id, result), 'add_subtask' (goal_id, desc), 'list_goals'.",
         "needs_agent": True,
     },
+    "tool_create": {
+        "fn": lambda name, code, description: file_write(f"tools_extra/{name}.py", code),
+        "description": "Create a NEW tool. Args: {name: str, code: str, description: str}. Code must be a Python function.",
+    },
 }
 
 
 def execute_tool(name: str, args: dict[str, Any], llm_fn=None, agent=None) -> dict[str, Any]:
     """Execute a tool by name with given args."""
+    # Try to load from extra tools if not in standard TOOLS
+    if name not in TOOLS:
+        extra_path = f"tools_extra/{name}.py"
+        if os.path.exists(extra_path):
+            try:
+                import importlib.util
+                spec = importlib.util.spec_from_file_location(name, extra_path)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                # Assume the module has a function with the same name
+                if hasattr(module, name):
+                    fn = getattr(module, name)
+                    return fn(**args)
+            except Exception as e:
+                return {"success": False, "output": f"Error loading extra tool {name}: {e}"}
+
     tool = TOOLS.get(name)
     if not tool:
-        return {"success": False, "output": f"Unknown tool: {name}"}
+        return {"success": False, "output": f"Unknown tool: {name}. Available: {', '.join(TOOLS)}"}
     
     fn = tool["fn"]
     extra_args = {}
