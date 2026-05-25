@@ -115,8 +115,8 @@ class HermesAgent:
         self._key_idx += 1
         return key
 
-    def _chat(self, messages: list[dict], max_tokens: int = 800, temperature: float = 0.3) -> str:
-        """Send chat completion request to LLM with key rotation and retry."""
+    def _chat(self, messages: list[dict], max_tokens: int = 800, temperature: float = 0.3) -> dict:
+        """Send chat completion request to LLM with key rotation and retry. Returns message dict."""
         last_error = None
         for _ in range(len(self.api_keys)):
             key = self._next_key()
@@ -142,11 +142,7 @@ class HermesAgent:
                         last_error = "Empty choices in response"
                         continue
                     msg = choices[0].get("message", {})
-                    content = msg.get("content", "")
-                    if not content:
-                        last_error = "Empty content in response"
-                        continue
-                    return content.strip()
+                    return msg
             except urllib.error.HTTPError as e:
                 if e.code == 401:
                     logger.warning("Key invalid (401), rotating...")
@@ -163,54 +159,65 @@ class HermesAgent:
 
     def _llm_fn(self, messages: list[dict], max_tokens: int = 800) -> str:
         """LLM call wrapper for tools that need it (e.g. PPT)."""
-        return self._chat(messages, max_tokens=max_tokens)
+        msg = self._chat(messages, max_tokens=max_tokens)
+        if isinstance(msg, dict):
+            return msg.get("content", "")
+        return str(msg)
 
-    def _parse_tool_call(self, text: str) -> Optional[dict]:
-        """Extract a JSON tool call from LLM response."""
+    def _parse_tool_call(self, msg: Any) -> Optional[dict]:
+        """Extract a JSON tool call from LLM response message."""
+        # 1. Handle OpenAI-style tool_calls
+        if isinstance(msg, dict) and msg.get("tool_calls"):
+            tc = msg["tool_calls"][0]
+            if tc.get("function"):
+                fn = tc["function"]
+                try:
+                    args = json.loads(fn.get("arguments", "{}"))
+                    return {"tool": fn.get("name"), "args": args}
+                except json.JSONDecodeError:
+                    pass
+
+        # 2. Handle text-based JSON (legacy or non-standard)
+        text = ""
+        if isinstance(msg, dict):
+            text = msg.get("content", "") or ""
+        elif isinstance(msg, str):
+            text = msg
+        
         text = text.strip()
-
-        if '"tool"' not in text:
+        if not text:
             return None
 
-        start = text.find("{")
-        if start == -1:
-            return None
-
-        depth = 0
-        in_string = False
-        escape = False
-        for i in range(start, len(text)):
-            c = text[i]
-            if escape:
-                escape = False
+        # Look for JSON-like structures
+        import re
+        # Try to find anything that looks like {"tool": ...}
+        matches = re.findall(r"\{.*\}", text, re.DOTALL)
+        for potential_json in matches:
+            try:
+                # Clean up markdown code blocks if present
+                clean_json = potential_json.strip()
+                if clean_json.startswith("```json"):
+                    clean_json = clean_json[7:].strip()
+                if clean_json.endswith("```"):
+                    clean_json = clean_json[:-3].strip()
+                
+                obj = json.loads(clean_json)
+                if isinstance(obj, dict):
+                    # Standard Hermes format: {"tool": "name", "args": {}}
+                    if "tool" in obj:
+                        return obj
+                    # Some LLMs might return {"name": "tool_name", "arguments": {}}
+                    if "name" in obj and ("arguments" in obj or "args" in obj):
+                        return {"tool": obj["name"], "args": obj.get("arguments") or obj.get("args")}
+            except json.JSONDecodeError:
                 continue
-            if c == "\\":
-                escape = True
-                continue
-            if c == '"':
-                in_string = not in_string
-                continue
-            if in_string:
-                continue
-            if c == "{":
-                depth += 1
-            elif c == "}":
-                depth -= 1
-                if depth == 0:
-                    try:
-                        obj = json.loads(text[start : i + 1])
-                        if isinstance(obj, dict) and "tool" in obj:
-                            args = obj.get("args", {})
-                            if not isinstance(args, dict):
-                                obj["args"] = {}
-                            return obj
-                    except json.JSONDecodeError:
-                        pass
-                    break
+        
         return None
 
-    def _is_error_response(self, text: str) -> bool:
-        return text.startswith("⚠️ LLM error:")
+    def _is_error_response(self, msg: Any) -> bool:
+        if isinstance(msg, str):
+            return msg.startswith("⚠️ LLM error:")
+        return False
 
     def _truncate_tool_output(self, output: str) -> str:
         if len(output) > self._max_tool_output:
@@ -265,18 +272,21 @@ class HermesAgent:
         tool_rounds = 0
         start_time = time.time()
 
+        final_text = ""
         for round_num in range(self.max_tool_rounds):
-            response = self._chat(messages)
+            msg_obj = self._chat(messages)
 
-            if self._is_error_response(response):
+            if self._is_error_response(msg_obj):
+                final_text = msg_obj if isinstance(msg_obj, str) else "⚠️ LLM error"
                 break
 
-            tool_call = self._parse_tool_call(response)
+            tool_call = self._parse_tool_call(msg_obj)
             if tool_call:
                 tool_name = str(tool_call.get("tool", ""))
                 tool_args = tool_call.get("args", {})
 
                 if not tool_name:
+                    final_text = msg_obj.get("content", "") if isinstance(msg_obj, dict) else str(msg_obj)
                     break
 
                 tool_rounds += 1
@@ -289,7 +299,11 @@ class HermesAgent:
                 tool_output = self._truncate_tool_output(result.get("output", ""))
 
                 # Add tool call and result to messages
-                messages.append({"role": "assistant", "content": response})
+                # If it was a structured tool call, we should ideally append it correctly, 
+                # but for simplicity and compatibility with the existing loop, we'll convert to string if needed
+                assistant_content = msg_obj.get("content", "") or json.dumps(tool_call)
+                messages.append({"role": "assistant", "content": assistant_content})
+                
                 result_text = f"Tool result ({tool_name}):\n{tool_output}"
                 if result.get("file"):
                     result_text += f"\nFile: {result['file']}"
@@ -298,11 +312,30 @@ class HermesAgent:
                 continue
 
             # No tool call — this is the final response
+            final_text = msg_obj.get("content", "") if isinstance(msg_obj, dict) else str(msg_obj)
             break
 
         # Save to history (only if no error)
-        if not self._is_error_response(response):
-            self._history[chat_id].append({"role": "assistant", "content": response})
+        if not self._is_error_response(final_text):
+            self._history[chat_id].append({"role": "assistant", "content": final_text})
+
+        # --- Learning: record successful task execution ---
+        if self.learning_mode and tools_used and not self._is_error_response(final_text):
+            duration = time.time() - start_time
+            try:
+                learner = self._get_learner(chat_id)
+                learner.learn_from_task(
+                    user_request=user_message,
+                    tools_used=tools_used,
+                    success=True,
+                    duration_sec=duration,
+                    output_summary=final_text[:300],
+                    llm_fn=self._llm_fn,
+                )
+            except Exception as e:
+                logger.warning("Learning failed: %s", e)
+
+        return final_text or "⚠️ No response from AI."
 
         # --- Learning: record successful task execution ---
         if self.learning_mode and tools_used and not self._is_error_response(response):
