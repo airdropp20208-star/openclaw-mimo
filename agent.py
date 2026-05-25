@@ -75,7 +75,7 @@ class HermesAgent:
         max_tool_rounds: int = 10,
         timeout: int = 120,
         autonomous_mode: bool = True,  # Enable autonomous planning
-        learning_mode: bool = True,    # Enable learning
+        learning_mode: bool = True,    # Enabled (Skills are kept)
     ):
         self.api_keys = api_keys
         self.api_base = api_base.rstrip("/")

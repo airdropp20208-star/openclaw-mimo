@@ -479,6 +479,10 @@ TOOLS: dict[str, dict[str, Any]] = {
         "fn": pandas_exec,
         "description": "Analyze data using pandas. Args: {code: str, csv_path?: str}. Use 'df' for the dataframe if csv_path is provided.",
     },
+    "skill_import": {
+        "fn": lambda url, name: file_write(f"tools_extra/{name}.py", browse_url(url)["output"]),
+        "description": "Import a new skill/tool from a URL. Args: {url: str, name: str}.",
+    },
 }
 
 
