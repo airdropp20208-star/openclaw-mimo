@@ -170,8 +170,8 @@ class Planner:
         logger.info("Added goal %s: %s", goal_id, description)
         return goal
 
-    def complete_subtask(self, subtask_id: str, result: str = "") -> Optional[Goal]:
-        """Mark a subtask as completed."""
+    def complete_subtask(self, subtask_id: str, result: str = "", llm_fn=None) -> Optional[Goal]:
+        """Mark a subtask as completed and optionally re-evaluate the plan."""
         for goal in self._goals:
             if goal.status != "active":
                 continue
@@ -180,16 +180,21 @@ class Planner:
                     st["status"] = "completed"
                     st["result"] = result
                     goal.updated_at = datetime.now().isoformat()
+                    
+                    # Adaptive Planning: If it's a major step, re-evaluate remaining tasks
+                    if llm_fn and len(goal.subtasks) > 1:
+                        self._adapt_plan(goal, subtask_id, result, llm_fn)
+
                     # Only complete goal if it has subtasks AND all are done
-                    if goal.subtasks and all(s["status"] == "completed" for s in goal.subtasks):
+                    if goal.subtasks and all(s["status"] in ["completed", "skipped"] for s in goal.subtasks):
                         goal.status = "completed"
                         logger.info("Goal %s completed!", goal.goal_id)
                     self._save()
                     return goal
         return None
 
-    def fail_subtask(self, subtask_id: str, reason: str = "") -> Optional[Goal]:
-        """Mark a subtask as failed."""
+    def fail_subtask(self, subtask_id: str, reason: str = "", llm_fn=None) -> Optional[Goal]:
+        """Mark a subtask as failed and trigger plan adaptation."""
         for goal in self._goals:
             if goal.status != "active":
                 continue
@@ -198,9 +203,56 @@ class Planner:
                     st["status"] = "failed"
                     st["result"] = reason
                     goal.updated_at = datetime.now().isoformat()
+                    
+                    # Trigger plan adaptation on failure
+                    if llm_fn:
+                        logger.info("Subtask failed. Triggering plan adaptation for goal %s", goal.goal_id)
+                        self._adapt_plan(goal, subtask_id, reason, llm_fn, is_failure=True)
+                    
                     self._save()
                     return goal
         return None
+
+    def _adapt_plan(self, goal: Goal, subtask_id: str, result: str, llm_fn, is_failure: bool = False):
+        """Internal helper to adapt the remaining plan based on new information."""
+        remaining_tasks = [st for st in goal.subtasks if st["status"] == "pending"]
+        if not remaining_tasks and not is_failure:
+            return
+
+        prompt = f"""Goal: {goal.description}
+Completed/Failed Task: {subtask_id}
+Result/Reason: {result}
+Current Remaining Plan: {json.dumps([st['description'] for st in remaining_tasks])}
+
+{'The last task FAILED.' if is_failure else 'The last task was successful.'}
+Based on this, should the remaining plan be adjusted? 
+- You can add new subtasks.
+- You can skip/remove unnecessary ones.
+- You can modify existing ones.
+
+Return a JSON object: {{"action": "update", "new_plan": ["task 1", "task 2", ...]}} or {{"action": "keep"}}
+ONLY return the JSON."""
+
+        try:
+            resp = llm_fn([{"role": "user", "content": prompt}])
+            import re
+            match = re.search(r"\{.*\}", resp, re.DOTALL)
+            if match:
+                data = json.loads(match.group())
+                if data.get("action") == "update" and isinstance(data.get("new_plan"), list):
+                    logger.info("Adapting plan for goal %s", goal.goal_id)
+                    # Keep completed tasks, replace pending ones
+                    new_subtasks = [st for st in goal.subtasks if st["status"] != "pending"]
+                    for i, desc in enumerate(data["new_plan"]):
+                        new_subtasks.append({
+                            "id": f"{goal.goal_id}.a{len(new_subtasks)+1}",
+                            "description": desc,
+                            "status": "pending",
+                            "result": None
+                        })
+                    goal.subtasks = new_subtasks
+        except Exception as e:
+            logger.warning("Plan adaptation failed: %s", e)
 
     def get_active_goals(self) -> list[Goal]:
         """Get all active goals, sorted by priority."""

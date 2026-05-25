@@ -426,9 +426,11 @@ Return your analysis and the next ACTION to take."""
             + "\n".join(f"  • {st['description']}" for st in goal.subtasks)
         )
 
-    def complete_subtask(self, chat_id: int, subtask_id: str, result: str = "") -> str:
+    def complete_subtask(self, chat_id: int, subtask_id: str, result: str = "", llm_fn=None) -> str:
         planner = self._get_planner(chat_id)
-        goal = planner.complete_subtask(subtask_id, result)
+        # Use provided llm_fn or agent's default
+        fn = llm_fn or self._llm_fn
+        goal = planner.complete_subtask(subtask_id, result, llm_fn=fn)
         if goal:
             if goal.status == "completed":
                 return f"🎉 Goal {goal.goal_id} completed! ({goal.progress}%)"
