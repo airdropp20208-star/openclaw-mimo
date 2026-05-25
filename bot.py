@@ -17,6 +17,7 @@ import logging
 import mimetypes
 import os
 import signal
+import subprocess
 import sys
 import time
 import urllib.error
@@ -239,7 +240,18 @@ def parse_goal_command(text: str) -> tuple[str, str]:
 # Main
 # ---------------------------------------------------------------------------
 
+def _auto_setup():
+    """Check and install missing dependencies."""
+    try:
+        import markitdown
+        import pptx
+    except ImportError:
+        logger.info("Installing missing dependencies...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "markitdown[all]", "python-pptx", "browser-use", "playwright"])
+        subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
+
 def main():
+    _auto_setup()
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN not set!")
         sys.exit(1)
