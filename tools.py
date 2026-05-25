@@ -302,6 +302,31 @@ def file_convert(file_path: str, target_fmt: str) -> dict[str, Any]:
 # PPT generation
 # ---------------------------------------------------------------------------
 
+def goal_manage(action: str, args: dict[str, Any], agent=None) -> dict[str, Any]:
+    """Manage goals and subtasks. action: add_goal, complete_subtask, add_subtask, list_goals."""
+    if not agent:
+        return {"success": False, "output": "Agent context missing"}
+    
+    chat_id = args.get("chat_id", 0) # This needs to be passed correctly
+    planner = agent._get_planner(chat_id)
+
+    try:
+        if action == "add_goal":
+            goal = agent.add_goal(chat_id, args.get("description"), args.get("priority", 5))
+            return {"success": True, "output": f"Goal created: {goal}"}
+        elif action == "complete_subtask":
+            res = agent.complete_subtask(chat_id, args.get("subtask_id"), args.get("result", ""))
+            return {"success": True, "output": res}
+        elif action == "add_subtask":
+            success = planner.add_subtask(args.get("goal_id"), args.get("description"), args.get("after_id"))
+            return {"success": success, "output": "Subtask added" if success else "Goal not found"}
+        elif action == "list_goals":
+            return {"success": True, "output": planner.get_summary()}
+        return {"success": False, "output": f"Unknown action: {action}"}
+    except Exception as e:
+        return {"success": False, "output": str(e)}
+
+
 def generate_ppt(content: str, llm_fn=None) -> dict[str, Any]:
     """Generate a PowerPoint from text content."""
     if llm_fn is None:
@@ -399,10 +424,31 @@ TOOLS: dict[str, dict[str, Any]] = {
         "description": "Generate PowerPoint. Args: {content: str}",
         "needs_llm": True,
     },
+    "goal_manage": {
+        "fn": goal_manage,
+        "description": "Manage autonomous goals. action: 'add_goal' (desc, priority), 'complete_subtask' (subtask_id, result), 'add_subtask' (goal_id, desc), 'list_goals'.",
+        "needs_agent": True,
+    },
 }
 
 
-def execute_tool(name: str, args: dict[str, Any], llm_fn=None) -> dict[str, Any]:
+def execute_tool(name: str, args: dict[str, Any], llm_fn=None, agent=None) -> dict[str, Any]:
+    """Execute a tool by name with given args."""
+    tool = TOOLS.get(name)
+    if not tool:
+        return {"success": False, "output": f"Unknown tool: {name}"}
+    
+    fn = tool["fn"]
+    extra_args = {}
+    if tool.get("needs_llm"):
+        extra_args["llm_fn"] = llm_fn
+    if tool.get("needs_agent"):
+        extra_args["agent"] = agent
+    
+    try:
+        return fn(**args, **extra_args)
+    except Exception as e:
+        return {"success": False, "output": f"Tool execution error: {str(e)}"} -> dict[str, Any]:
     """Execute a tool by name with given args."""
     tool = TOOLS.get(name)
     if not tool:

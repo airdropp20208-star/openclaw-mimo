@@ -296,7 +296,13 @@ class HermesAgent:
                 tools_used.append(tool_name)
 
                 # Execute the tool
-                result = execute_tool(tool_name, tool_args, llm_fn=self._llm_fn)
+                # Inject chat_id into args if needed by goal_manage
+                if tool_name == "goal_manage" and "args" not in tool_args:
+                    tool_args["args"] = {"chat_id": chat_id}
+                elif tool_name == "goal_manage" and isinstance(tool_args.get("args"), dict):
+                    tool_args["args"]["chat_id"] = chat_id
+
+                result = execute_tool(tool_name, tool_args, llm_fn=self._llm_fn, agent=self)
                 tool_output = self._truncate_tool_output(result.get("output", ""))
 
                 # Add tool call and result to messages

@@ -347,18 +347,49 @@ Return ONLY a JSON array of strings. Example:
 
         return "\n".join(lines)
 
+    def add_subtask(self, goal_id: str, description: str, after_id: Optional[str] = None) -> bool:
+        """Dynamically add a subtask to an existing goal."""
+        for goal in self._goals:
+            if goal.goal_id == goal_id:
+                new_id = f"{goal_id}.s{len(goal.subtasks) + 1}"
+                new_st = {
+                    "id": new_id,
+                    "description": description,
+                    "status": "pending",
+                    "result": None,
+                }
+                if after_id:
+                    for i, st in enumerate(goal.subtasks):
+                        if st["id"] == after_id:
+                            goal.subtasks.insert(i + 1, new_st)
+                            break
+                    else:
+                        goal.subtasks.append(new_st)
+                else:
+                    goal.subtasks.append(new_st)
+                
+                goal.updated_at = datetime.now().isoformat()
+                self._save()
+                return True
+        return False
+
     def export_for_prompt(self) -> str:
-        """Export goal context for injection into LLM prompt."""
+        """Export detailed goal context for injection into LLM prompt."""
         active = self.get_active_goals()
         if not active:
             return ""
 
-        lines = ["[AUTONOMOUS GOALS]", "You have active goals. Consider them when responding."]
+        lines = ["[CURRENT GOALS & PROGRESS]"]
+        lines.append("You are currently working on these goals. Use 'goal_manage' tool to update progress.")
         for g in active[:3]:
-            lines.append(f"- Goal {g.goal_id}: {g.description} (priority {g.priority})")
-            next_st = g.next_subtask
-            if next_st:
-                lines.append(f"  Next action: {next_st['description']}")
+            lines.append(f"\n🎯 Goal {g.goal_id}: {g.description}")
+            lines.append(f"   Status: {g.status} | Progress: {g.progress}%")
+            for st in g.subtasks:
+                status_icon = "✅" if st["status"] == "completed" else "❌" if st["status"] == "failed" else "⏳"
+                lines.append(f"   {status_icon} {st['id']}: {st['description']}")
+                if st.get("result"):
+                    lines.append(f"      Result: {st['result'][:100]}...")
+        
         return "\n".join(lines)
 
 
