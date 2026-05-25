@@ -193,7 +193,26 @@ class HermesAgent:
         if not text:
             return None
 
-        # 3. Handle THOUGHT/ACTION format
+        # 3. Handle XML format <tool_call><function=name><parameter=arg>val</parameter></function></tool_call>
+        if "<tool_call>" in text:
+            import re
+            try:
+                # Extract tool name
+                name_match = re.search(r"<function=([^>]+)>", text)
+                if name_match:
+                    tool_name = name_match.group(1).strip()
+                    args = {}
+                    # Extract all parameters
+                    param_matches = re.finditer(r"<parameter=([^>]+)>(.*?)</parameter>", text, re.DOTALL)
+                    for pm in param_matches:
+                        p_name = pm.group(1).strip()
+                        p_val = pm.group(2).strip()
+                        args[p_name] = p_val
+                    return {"tool": tool_name, "args": args}
+            except Exception as e:
+                logger.error("Error parsing XML tool call: %s", e)
+
+        # 4. Handle THOUGHT/ACTION format
         if "ACTION:" in text:
             action_part = text.split("ACTION:", 1)[1].strip()
             try:
