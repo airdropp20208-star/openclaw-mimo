@@ -442,6 +442,9 @@ TOOLS: dict[str, dict[str, Any]] = {
 
 def execute_tool(name: str, args: dict[str, Any], llm_fn=None, agent=None) -> dict[str, Any]:
     """Execute a tool by name with given args."""
+    if not isinstance(args, dict):
+        return {"success": False, "output": f"Args must be a dict, got {type(args).__name__}"}
+
     # Try to load from extra tools if not in standard TOOLS
     if name not in TOOLS:
         extra_path = f"tools_extra/{name}.py"
@@ -471,22 +474,7 @@ def execute_tool(name: str, args: dict[str, Any], llm_fn=None, agent=None) -> di
     
     try:
         return fn(**args, **extra_args)
-    except Exception as e:
-        return {"success": False, "output": f"Tool execution error: {str(e)}"} -> dict[str, Any]:
-    """Execute a tool by name with given args."""
-    tool = TOOLS.get(name)
-    if not tool:
-        return {"success": False, "output": f"Unknown tool: {name}. Available: {', '.join(TOOLS)}"}
-
-    if not isinstance(args, dict):
-        return {"success": False, "output": f"Args must be a dict, got {type(args).__name__}"}
-
-    fn = tool["fn"]
-    try:
-        if tool.get("needs_llm"):
-            return fn(llm_fn=llm_fn, **args)
-        return fn(**args)
     except TypeError as e:
         return {"success": False, "output": f"Invalid args for {name}: {e}"}
     except Exception as e:
-        return {"success": False, "output": f"Tool {name} error: {str(e)[:300]}"}
+        return {"success": False, "output": f"Tool execution error: {str(e)}"}

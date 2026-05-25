@@ -381,24 +381,6 @@ Return your analysis and the next ACTION to take."""
 
         return final_text or "⚠️ No response from AI."
 
-        # --- Learning: record successful task execution ---
-        if self.learning_mode and tools_used and not self._is_error_response(response):
-            duration = time.time() - start_time
-            try:
-                learner = self._get_learner(chat_id)
-                learner.learn_from_task(
-                    user_request=user_message,
-                    tools_used=tools_used,
-                    success=True,
-                    duration_sec=duration,
-                    output_summary=response[:300],
-                    llm_fn=self._llm_fn,
-                )
-            except Exception as e:
-                logger.warning("Learning failed: %s", e)
-
-        return response or "⚠️ No response from AI."
-
     # --- Goal Management (for bot commands) ---
 
     def add_goal(
