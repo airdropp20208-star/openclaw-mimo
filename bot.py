@@ -471,11 +471,23 @@ def main():
                     if removed:
                         logger.info("Cleaned up %d old chat histories", removed)
 
+                    # Show "thinking" status periodically for long tasks
+                    start_time = time.time()
                     response = agent.process(chat_id, text)
+                    
+                    # Ensure response is not empty
+                    if not response or not response.strip():
+                        response = "⚠️ Agent returned an empty response. This might be due to a model error or filtering."
+                    
                     send(chat_id, response)
                 except Exception as e:
                     logger.exception("Agent error for chat %d", chat_id)
-                    send(chat_id, "⚠️ Error processing your request. Try again.")
+                    error_msg = f"⚠️ Error: {str(e)}"
+                    if "401" in error_msg:
+                        error_msg = "⚠️ API Key error. Please check your configuration."
+                    elif "timeout" in error_msg.lower():
+                        error_msg = "⚠️ Request timed out. The task might be too complex."
+                    send(chat_id, error_msg)
 
         except KeyboardInterrupt:
             logger.info("Interrupted, shutting down...")

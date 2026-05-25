@@ -53,6 +53,8 @@ If no action is needed, just provide the final response after your THOUGHT.
 
 After each tool execution, you will receive the result. Continue the loop until the task is complete.
 When finished, provide a comprehensive final response to the user in their language.
+
+CRITICAL: When you have completed the task or have a final answer, provide it directly as plain text. DO NOT include "THOUGHT:" or "ACTION:" in your final response to the user. These are for your internal reasoning loop only.
 Use professional, academic style and markdown for clarity."""
 
 
@@ -214,41 +216,61 @@ class HermesAgent:
 
         # 4. Handle THOUGHT/ACTION format
         if "ACTION:" in text:
-            action_part = text.split("ACTION:", 1)[1].strip()
-            try:
-                # Try to find JSON within the action part
-                import re
-                match = re.search(r"\{.*\}", action_part, re.DOTALL)
-                if match:
-                    obj = json.loads(match.group())
-                    if isinstance(obj, dict) and "tool" in obj:
-                        return obj
-            except json.JSONDecodeError:
-                pass
+            # Split by ACTION: and try each part
+            parts = text.split("ACTION:")
+            for part in parts[1:]:
+                part = part.strip()
+                try:
+                    # Find the first JSON object in this part
+                    import re
+                    # Use non-greedy match to find individual JSON objects
+                    match = re.search(r"\{.*?\}", part, re.DOTALL)
+                    if match:
+                        obj = json.loads(match.group())
+                        if isinstance(obj, dict) and "tool" in obj:
+                            return obj
+                except json.JSONDecodeError:
+                    # If non-greedy failed, try greedy for this specific part
+                    try:
+                        match = re.search(r"\{.*\}", part, re.DOTALL)
+                        if match:
+                            obj = json.loads(match.group())
+                            if isinstance(obj, dict) and "tool" in obj:
+                                return obj
+                    except json.JSONDecodeError:
+                        pass
 
-        # Look for JSON-like structures
+        # Look for JSON-like structures anywhere
         import re
-        # Try to find anything that looks like {"tool": ...}
-        matches = re.findall(r"\{.*\}", text, re.DOTALL)
-        for potential_json in matches:
-            try:
-                # Clean up markdown code blocks if present
-                clean_json = potential_json.strip()
-                if clean_json.startswith("```json"):
-                    clean_json = clean_json[7:].strip()
-                if clean_json.endswith("```"):
-                    clean_json = clean_json[:-3].strip()
-                
-                obj = json.loads(clean_json)
-                if isinstance(obj, dict):
-                    # Standard Hermes format: {"tool": "name", "args": {}}
-                    if "tool" in obj:
-                        return obj
-                    # Some LLMs might return {"name": "tool_name", "arguments": {}}
-                    if "name" in obj and ("arguments" in obj or "args" in obj):
-                        return {"tool": obj["name"], "args": obj.get("arguments") or obj.get("args")}
-            except json.JSONDecodeError:
-                continue
+        # Use a more robust way to find JSON objects: find all blocks starting with { and ending with }
+        # Then try to parse them one by one.
+        matches = re.finditer(r"\{", text)
+        for m in matches:
+            start = m.start()
+            # Try to find a matching closing brace or just take the rest of the string
+            # and let json.loads handle the truncation if possible (though standard json doesn't)
+            # A simpler way: try all possible end positions
+            for end in range(len(text), start, -1):
+                if text[end-1] == '}':
+                    potential_json = text[start:end]
+                    try:
+                        # Clean up markdown code blocks if present
+                        clean_json = potential_json.strip()
+                        if clean_json.startswith("```json"):
+                            clean_json = clean_json[7:].strip()
+                        if clean_json.endswith("```"):
+                            clean_json = clean_json[:-3].strip()
+                        
+                        obj = json.loads(clean_json)
+                        if isinstance(obj, dict):
+                            if "tool" in obj:
+                                return obj
+                            if "name" in obj and ("arguments" in obj or "args" in obj):
+                                return {"tool": obj["name"], "args": obj.get("arguments") or obj.get("args")}
+                        break # Found a valid JSON, move to next start or return
+                    except json.JSONDecodeError:
+                        continue
+        
         
         return None
 
@@ -417,14 +439,22 @@ Return your analysis and the next ACTION to take."""
     ) -> str:
         """Add a new goal. Returns confirmation message."""
         planner = self._get_planner(chat_id)
+        phases = []
         if subtasks is None:
             # Use LLM to decompose
             if self.autonomous_mode:
-                subtasks = planner.decompose_goal(description, llm_fn=self._llm_fn)
+                decomposition = planner.decompose_goal(description, llm_fn=self._llm_fn)
+                phases = decomposition.get("phases", [])
+                # Extract subtask descriptions from the list of dicts
+                subtasks = [st["description"] for st in decomposition.get("subtasks", [])]
             else:
                 subtasks = [description]
 
         goal = planner.add_goal(description, priority, deadline, subtasks)
+        if phases:
+            goal.phases = phases
+            planner._save()
+        
         return (
             f"🎯 Goal added: {goal.goal_id}\n"
             f"📝 {description}\n"

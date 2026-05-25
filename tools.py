@@ -353,7 +353,7 @@ def goal_manage(action: str, args: dict[str, Any], agent=None) -> dict[str, Any]
             goal = agent.add_goal(chat_id, args.get("description"), args.get("priority", 5))
             return {"success": True, "output": f"Goal created: {goal}"}
         elif action == "complete_subtask":
-            res = agent.complete_subtask(chat_id, args.get("subtask_id"), args.get("result", ""), llm_fn=llm_fn)
+            res = agent.complete_subtask(chat_id, args.get("subtask_id"), args.get("result", ""), llm_fn=agent._llm_fn)
             return {"success": True, "output": res}
         elif action == "add_subtask":
             success = planner.add_subtask(args.get("goal_id"), args.get("description"), args.get("after_id"))
