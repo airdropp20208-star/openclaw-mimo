@@ -323,9 +323,28 @@ class HermesAgent:
                 result = execute_tool(tool_name, tool_args, llm_fn=self._llm_fn, agent=self)
                 tool_output = self._truncate_tool_output(result.get("output", ""))
 
+                # --- ADVANCED REFLECTION ---
+                # If tool failed or output looks suspicious, ask LLM to reflect
+                if not result.get("success") or "error" in tool_output.lower() or "failed" in tool_output.lower():
+                    logger.info("Triggering reflection for tool: %s", tool_name)
+                    reflection_prompt = f"""The tool '{tool_name}' returned an error or suspicious output.
+Tool Args: {json.dumps(tool_args)}
+Output: {tool_output}
+
+Analyze why this happened and suggest a fix or an alternative approach.
+If it's a syntax error, provide the corrected command.
+If a resource is missing, suggest how to get it.
+Return your analysis and the next ACTION to take."""
+                    
+                    reflection_msg = self._chat([
+                        {"role": "system", "content": "You are the Reflection Engine for Hermes. Analyze failures and provide fixes."},
+                        {"role": "user", "content": reflection_prompt}
+                    ])
+                    
+                    if isinstance(reflection_msg, dict) and reflection_msg.get("content"):
+                        tool_output += f"\n\n[REFLECTION]: {reflection_msg['content']}"
+
                 # Add tool call and result to messages
-                # If it was a structured tool call, we should ideally append it correctly, 
-                # but for simplicity and compatibility with the existing loop, we'll convert to string if needed
                 assistant_content = msg_obj.get("content", "") or json.dumps(tool_call)
                 messages.append({"role": "assistant", "content": assistant_content})
                 
