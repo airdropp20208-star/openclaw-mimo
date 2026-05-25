@@ -396,6 +396,8 @@ Return ONLY a JSON array of strings. Example:
 
         if paused:
             lines.append(f"\n⏸ Paused: {len(paused)}")
+            for g in paused:
+                lines.append(f"  ⏸ {g.goal_id}: {g.description[:60]}")
 
         return "\n".join(lines)
 
