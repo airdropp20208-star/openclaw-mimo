@@ -22,7 +22,7 @@ GOALS_FILE = os.path.join(_DATA_DIR, "hermes_goals.json")
 
 
 class Goal:
-    """Represents a goal with subtasks."""
+    """Represents a goal with phases and subtasks."""
 
     def __init__(
         self,
@@ -30,8 +30,10 @@ class Goal:
         description: str,
         priority: int = 5,  # 1=highest, 10=lowest
         deadline: Optional[str] = None,
+        phases: Optional[list[dict]] = None,
         subtasks: Optional[list[dict]] = None,
         status: str = "active",  # active, paused, completed, failed
+        current_phase_id: int = 1,
         created_at: Optional[str] = None,
         updated_at: Optional[str] = None,
         tags: Optional[list[str]] = None,
@@ -40,8 +42,10 @@ class Goal:
         self.description = description
         self.priority = priority
         self.deadline = deadline
+        self.phases = phases or []
         self.subtasks = subtasks or []
         self.status = status
+        self.current_phase_id = current_phase_id
         self.created_at = created_at or datetime.now().isoformat()
         self.updated_at = updated_at or self.created_at
         self.tags = tags or []
@@ -52,8 +56,10 @@ class Goal:
             "description": self.description,
             "priority": self.priority,
             "deadline": self.deadline,
+            "phases": self.phases,
             "subtasks": self.subtasks,
             "status": self.status,
+            "current_phase_id": self.current_phase_id,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "tags": self.tags,
@@ -291,39 +297,47 @@ ONLY return the JSON."""
 
     # --- Autonomous Planning ---
 
-    def decompose_goal(self, description: str, llm_fn=None) -> list[str]:
+    def decompose_goal(self, description: str, llm_fn=None) -> dict:
         """
-        Use LLM to decompose a high-level goal into actionable subtasks.
-        If no llm_fn, return a basic decomposition.
+        Use LLM to decompose a high-level goal into Phases and Subtasks.
         """
         if not llm_fn:
-            return [f"Work on: {description}"]
+            return {
+                "phases": [{"id": 1, "title": "Execution"}],
+                "subtasks": [{"description": f"Work on: {description}", "phase_id": 1}]
+            }
 
-        prompt = f"""Break this goal into 3-7 concrete, actionable subtasks.
-Each subtask should be a single clear action that can be done independently.
-
+        prompt = f"""Break this high-level goal into 2-4 Phases, and each phase into 2-3 actionable Subtasks.
 Goal: {description}
 
-Return ONLY a JSON array of strings. Example:
-["Step 1: ...", "Step 2: ...", "Step 3: ..."]"""
+Return ONLY a JSON object:
+{{
+  "phases": [
+    {{"id": 1, "title": "Phase 1 title"}},
+    {{"id": 2, "title": "Phase 2 title"}}
+  ],
+  "subtasks": [
+    {{"description": "Task 1", "phase_id": 1}},
+    {{"description": "Task 2", "phase_id": 1}},
+    {{"description": "Task 3", "phase_id": 2}}
+  ]
+}}"""
 
         try:
-            response = llm_fn(
-                [{"role": "user", "content": prompt}],
-                max_tokens=500,
-            )
-            # Extract JSON array
-            text = response.strip()
-            start = text.find("[")
-            end = text.rfind("]") + 1
-            if start >= 0 and end > start:
-                tasks = json.loads(text[start:end])
-                if isinstance(tasks, list) and all(isinstance(t, str) for t in tasks):
-                    return tasks[:7]
+            response = llm_fn([{"role": "user", "content": prompt}], max_tokens=800)
+            import re
+            match = re.search(r"\{.*\}", response, re.DOTALL)
+            if match:
+                data = json.loads(match.group())
+                if "phases" in data and "subtasks" in data:
+                    return data
         except Exception as e:
-            logger.warning("LLM decomposition failed: %s", e)
+            logger.warning("LLM phase decomposition failed: %s", e)
 
-        return [f"Work on: {description}"]
+        return {
+            "phases": [{"id": 1, "title": "Execution"}],
+            "subtasks": [{"description": f"Work on: {description}", "phase_id": 1}]
+        }
 
     def get_next_actions(self, llm_fn=None) -> list[dict]:
         """
