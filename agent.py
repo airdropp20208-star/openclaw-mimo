@@ -43,9 +43,13 @@ AVAILABLE TOOLS:
 - convert: Convert file formats (PDF to MD, MP4 to MP3, etc.). Args: {file_path: str, target_fmt: str}
 - ppt: Generate a professional PowerPoint presentation. Args: {content: str}
 
-RESPONSE FORMAT:
-You MUST respond with a JSON tool call when action is needed:
-{"tool": "tool_name", "args": {"arg1": "value1", ...}}
+THOUGHT PROCESS:
+Before every action or response, you MUST perform an internal monologue. Analyze the current state, evaluate previous tool results, and plan your next move.
+Format your thought process as:
+THOUGHT: <your reasoning here>
+ACTION: {"tool": "tool_name", "args": {...}}
+
+If no action is needed, just provide the final response after your THOUGHT.
 
 After each tool execution, you will receive the result. Continue the loop until the task is complete.
 When finished, provide a comprehensive final response to the user in their language.
@@ -188,6 +192,20 @@ class HermesAgent:
         text = text.strip()
         if not text:
             return None
+
+        # 3. Handle THOUGHT/ACTION format
+        if "ACTION:" in text:
+            action_part = text.split("ACTION:", 1)[1].strip()
+            try:
+                # Try to find JSON within the action part
+                import re
+                match = re.search(r"\{.*\}", action_part, re.DOTALL)
+                if match:
+                    obj = json.loads(match.group())
+                    if isinstance(obj, dict) and "tool" in obj:
+                        return obj
+            except json.JSONDecodeError:
+                pass
 
         # Look for JSON-like structures
         import re
