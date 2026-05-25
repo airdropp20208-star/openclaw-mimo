@@ -221,18 +221,20 @@ class Learner:
         tools = record["tools_used"]
 
         if llm_fn:
-            prompt = f"""Analyze this successful task and extract a reusable pattern.
+            prompt = f"""Analyze this successful task and extract a reusable generalized pattern.
+Focus on the STRATEGY rather than the specific instance.
 
 User asked: {record['user_request']}
 Tools used: {', '.join(tool for tool in tools)}
-Duration: {record.get('duration_sec', 0):.1f}s
+Output summary: {record.get('output_summary', '')}
 
 Return a JSON object with:
-- "name": short skill name (2-5 words)
-- "description": what this skill does (1 sentence)
-- "category": one of [coding, research, file_ops, web, conversion, presentation, general]
-- "triggers": list of 2-4 keywords that would trigger this skill
-- "template": a brief step-by-step template (or null if too complex)
+- "name": short skill name (e.g. "Web Research & PPT Generation")
+- "description": generalized strategy (e.g. "Search for info, summarize, and convert to slides")
+- "category": [coding, research, file_ops, web, conversion, presentation, general]
+- "triggers": 3-5 keywords or phrases that represent the INTENT
+- "template": step-by-step instructions for an AI to repeat this strategy
+- "principles": 2-3 general principles learned from this task (e.g. "Always check file exists before reading")
 
 Return ONLY the JSON object."""
 
