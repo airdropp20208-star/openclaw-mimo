@@ -301,6 +301,9 @@ class HermesAgent:
 
         # Build messages with dynamic system prompt (includes skills + goals)
         system_prompt = self._build_system_prompt(chat_id)
+        # Add Reasoning instruction to the prompt
+        system_prompt += "\n\nREASONING INSTRUCTION: Before every action, think step-by-step. Analyze the goal, identify the current state, and decide the most efficient tool. If a tool fails, reason why and adapt."
+        
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(self._history[chat_id])
 
@@ -312,7 +315,9 @@ class HermesAgent:
 
         final_text = ""
         for round_num in range(self.max_tool_rounds):
-            msg_obj = self._chat(messages)
+            # Increase temperature slightly for better reasoning in early rounds
+            temp = 0.4 if round_num == 0 else 0.2
+            msg_obj = self._chat(messages, temperature=temp)
 
             if self._is_error_response(msg_obj):
                 final_text = msg_obj if isinstance(msg_obj, str) else "⚠️ LLM error"
