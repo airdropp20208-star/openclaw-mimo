@@ -431,7 +431,11 @@ TOOLS: dict[str, dict[str, Any]] = {
     },
     "tool_create": {
         "fn": lambda name, code, description: file_write(f"tools_extra/{name}.py", code),
-        "description": "Create a NEW tool. Args: {name: str, code: str, description: str}. Code must be a Python function.",
+        "description": "Create a NEW tool. Args: {name: str, code: str, description: str}. Code must be a standalone Python file in tools_extra/ defining a function with the same name.",
+    },
+    "tool_discover": {
+        "fn": lambda: {"success": True, "output": "\n".join(os.listdir("tools_extra")) if os.path.exists("tools_extra") else "No extra tools found."},
+        "description": "List all dynamically created tools in tools_extra/.",
     },
 }
 
