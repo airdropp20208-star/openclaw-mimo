@@ -12,6 +12,7 @@ Features:
 import json
 import logging
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -584,8 +585,14 @@ Return your analysis and the next ACTION to take."""
         messages.extend(self._history[chat_id])
 
         response = self._chat(messages)
+        content = response.get("content", "") if isinstance(response, dict) else str(response)
+
+        # --- REGEX FILTER: strip leaked XML/parameter tags ---
+        content = re.sub(r'<parameter.*?>.*?</parameter>', '', content, flags=re.DOTALL)
+        content = re.sub(r'<thinking.*?>.*?</thinking>', '', content, flags=re.DOTALL)
+        content = re.sub(r'<.*?>', '', content).strip()
 
         if not self._is_error_response(response):
-            self._history[chat_id].append({"role": "assistant", "content": response})
+            self._history[chat_id].append({"role": "assistant", "content": content})
 
-        return response or "⚠️ No response from AI."
+        return content or "Hmm, minh chua co gi de noi. Thu lai nha!"
