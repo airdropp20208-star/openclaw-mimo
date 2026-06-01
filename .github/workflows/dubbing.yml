@@ -1,0 +1,160 @@
+name: Donghua Dubbing Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: 'Donghua video URL (YouTube/Bilibili)'
+        required: true
+        type: string
+      source_lang:
+        description: 'Source language'
+        required: false
+        type: choice
+        default: 'Chinese'
+        options:
+          - Chinese
+          - Japanese
+          - Korean
+      target_lang:
+        description: 'Target language'
+        required: false
+        type: choice
+        default: 'Vietnamese'
+        options:
+          - Vietnamese
+          - English
+      tts_engine:
+        description: 'TTS engine'
+        required: false
+        type: choice
+        default: 'omnivoice'
+        options:
+          - omnivoice
+          - edge
+      title:
+        description: 'Video title for YouTube'
+        required: false
+        type: string
+        default: ''
+      description:
+        description: 'Video description'
+        required: false
+        type: string
+        default: ''
+      upload_youtube:
+        description: 'Upload to YouTube after dubbing'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  # ─── Job 1: Quick test (no GPU needed) ────────────────────────
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+
+      - name: Install Python deps (no torch/omnivoice)
+        run: |
+          pip install -q yt-dlp edge-tts faster-whisper pydub numpy pillow requests
+
+      - name: Test imports
+        run: |
+          python -c "from tools_video import video_edit, tts_generate, video_dub; print('tools_video OK')"
+          python -c "import yt_dlp; print('yt-dlp OK')"
+          python -c "import edge_tts; print('edge-tts OK')"
+
+  # ─── Job 2: Dubbing pipeline (GPU available) ──────────────────
+  dub:
+    needs: test
+    # Use GPU runner if available, fallback to CPU
+    runs-on: ${{ github.event.inputs.tts_engine == 'omnivoice' && fromJSON('["self-hosted", "gpu"]') || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+
+      - name: Install Python deps (CPU)
+        if: github.event.inputs.tts_engine != 'omnivoice'
+        run: |
+          pip install -q yt-dlp edge-tts faster-whisper pydub numpy pillow requests
+
+      - name: Install Python deps (GPU + OmniVoice)
+        if: github.event.inputs.tts_engine == 'omnivoice'
+        run: |
+          pip install -q yt-dlp faster-whisper pydub numpy pillow requests
+          pip install -q torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+          pip install -q omnivoice soundfile
+
+      - name: Run dubbing pipeline
+        env:
+          VIDEO_URL: ${{ github.event.inputs.video_url }}
+          SOURCE_LANG: ${{ github.event.inputs.source_lang }}
+          TARGET_LANG: ${{ github.event.inputs.target_lang }}
+          TTS_ENGINE: ${{ github.event.inputs.tts_engine }}
+          MIMO_API_KEY: ${{ secrets.MIMO_API_KEY }}
+          MIMO_API_BASE: ${{ secrets.MIMO_API_BASE || 'https://api.xiaomimimo.com/v1' }}
+          MIMO_MODEL: ${{ secrets.MIMO_MODEL || 'mimo-v2.5-pro' }}
+        run: |
+          python dubbing.py \
+            --url "$VIDEO_URL" \
+            --source-lang "$SOURCE_LANG" \
+            --target-lang "$TARGET_LANG" \
+            --tts-engine "$TTS_ENGINE" \
+            --output /tmp/output
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dubbed-video
+          path: /tmp/output/
+          retention-days: 7
+
+  # ─── Job 3: Upload to YouTube (optional) ───────────────────────
+  upload:
+    needs: dub
+    if: github.event.inputs.upload_youtube == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dubbed-video
+          path: /tmp/output/
+
+      - name: Upload to YouTube
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          TITLE: ${{ github.event.inputs.title || 'Donghua Review' }}
+          DESCRIPTION: ${{ github.event.inputs.description || 'Auto-dubbed by OpenClaw MiMo' }}
+        run: |
+          python upload_youtube.py \
+            --video /tmp/output/dubbed.mp4 \
+            --title "$TITLE" \
+            --description "$DESCRIPTION"

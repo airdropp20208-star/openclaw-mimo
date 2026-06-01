@@ -1,25 +1,21 @@
-# OpenClaw MiMo - Professional Dubbing Studio
+# OpenClaw MiMo — Donghua Dubbing Pipeline
 # Core deps
-
-# Video Editing
 pydub>=0.25.1
 numpy>=1.24.0
 pillow>=10.0.0
-
-# TTS - OmniVoice (Primary)
-omnivoice>=0.1.5
-torch>=2.0.0
-torchaudio>=2.0.0
-soundfile>=0.12.0
-
-# TTS - Edge (Fallback)
-edge-tts>=6.1.0
-
-# Transcription
-faster-whisper>=1.0.0
+requests>=2.28.0
 
 # Download
 yt-dlp>=2024.0.0
 
-# API
-requests>=2.28.0
+# Transcription
+faster-whisper>=1.0.0
+
+# TTS - Edge (CPU fallback)
+edge-tts>=6.1.0
+
+# TTS - OmniVoice (GPU, installed separately in CI)
+# omnivoice>=0.1.5
+# torch>=2.0.0
+# torchaudio>=2.0.0
+# soundfile>=0.12.0
