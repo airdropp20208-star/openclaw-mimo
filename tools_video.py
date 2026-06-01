@@ -181,7 +181,7 @@ def _video_concat(video_path, output_path, inputs_str):
     
     try:
         os.unlink(list_path)
-    except:
+    except Exception:
         pass
     
     if os.path.exists(output_path):
