@@ -54,7 +54,7 @@ class DubConfig:
     source_lang: str = "zh"
     target_lang: str = "vi"
     quality: str = "standard"
-    tts_engine: str = "edge"           # edge, omnivoice
+    tts_engine: str = "omnivoice"           # edge, omnivoice
     tts_voice: str = "vi-VN-HoaiMyNeural"
     keep_original: bool = False        # Mix with original audio
     original_volume: float = 0.3       # Volume of original audio when mixing
