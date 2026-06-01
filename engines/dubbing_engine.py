@@ -1,26 +1,41 @@
 #!/usr/bin/env python3
 """
-Dubbing Engine — Voice-Video Sync
-===================================
-Core engine for professional video dubbing with precise voice-video synchronization.
+Professional Dubbing Engine
+============================
+Full-featured dubbing pipeline with studio-grade quality.
 
-Key features:
-- Whisper transcription with word-level timestamps
-- TTS generation via remote OmniVoice API
-- Voice speed adjustment to match original segment duration
-- Audio cross-fade between segments
-- Subtitle generation with proper timing
+Pipeline:
+1. Download → Extract Audio → Whisper (word-level timestamps)
+2. MiMo Translation (context-aware)
+3. OmniVoice TTS (voice cloning + emotion)
+4. Voice Sync (atempo matching)
+5. Audio Processing (normalize, compress, EQ)
+6. Video Compositing (subtitle burn, watermark)
+7. Final Mix (multi-track, ducking)
 """
 
-import base64
 import json
 import os
 import subprocess
 import sys
-import tempfile
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+
+# Local imports
+from audio_processor import (
+    normalize_loudness,
+    compress_dynamics,
+    process_dubbing_audio,
+    crossfade_audio,
+    detect_breaths,
+)
+from tts_engine import ProfessionalTTS, TTSConfig, prepare_reference_audio
+from video_compositor import (
+    SubtitleBurner,
+    AudioMixer,
+    VideoEditor,
+    QUALITY_PRESETS,
+)
 
 import requests
 
@@ -32,54 +47,39 @@ class DubConfig:
     mimo_api_key: str = ""
     mimo_api_base: str = "https://api.xiaomimimo.com/v1"
     mimo_model: str = "mimo-v2.5-pro"
-    omnivoice_url: str = ""  # Remote OmniVoice API server
+    omnivoice_url: str = ""
     omnivoice_key: str = ""
     
     # Whisper
     whisper_model: str = "large-v3"
-    whisper_device: str = "auto"  # auto, cuda, cpu
+    whisper_device: str = "auto"
     
     # TTS
-    tts_engine: str = "omnivoice"  # omnivoice, edge
-    tts_voice: str = "vi-VN-HoaiMyNeural"  # Edge TTS voice
-    tts_instruct: str = "female, vietnamese accent, natural"  # OmniVoice voice design
-    tts_ref_audio: str = ""  # Reference audio for voice cloning
-    tts_ref_text: str = ""  # Transcription of reference audio
+    tts_engine: str = "omnivoice"
+    tts_instruct: str = "female, vietnamese accent, natural"
+    tts_ref_audio: str = ""
+    tts_ref_text: str = ""
+    tts_emotion: str = "neutral"
     tts_speed: float = 1.0
     
+    # Audio Processing
+    normalize_audio: bool = True
+    compress_audio: bool = True
+    noise_gate: bool = True
+    eq_profile: str = "speech"
+    target_lufs: float = -16.0
+    
+    # Video
+    video_quality: str = "1080p"
+    subtitle_style: str = "professional"
+    watermark_path: str = ""
+    watermark_text: str = ""
+    
     # Sync
-    sync_mode: str = "stretch"  # stretch, pad, compress
-    sync_tolerance: float = 0.1  # 10% tolerance before adjusting
-    crossfade_ms: int = 50  # Cross-fade between segments
+    crossfade_ms: int = 50
     
     # Output
-    output_sample_rate: int = 24000
-    output_channels: int = 1
-
-
-# ─── Data models ───────────────────────────────────────────────────
-@dataclass
-class Segment:
-    index: int
-    start: float
-    end: float
-    text: str
-    text_vi: str = ""
-    tts_path: str = ""
-    tts_duration: float = 0.0
-    speed_factor: float = 1.0
-    synced_path: str = ""
-
-
-@dataclass
-class DubResult:
-    success: bool
-    output_video: str = ""
-    output_srt: str = ""
-    segments: list = field(default_factory=list)
-    total_duration: float = 0.0
-    processing_time: float = 0.0
-    error: str = ""
+    output_dir: str = "/tmp/dub_output"
 
 
 def log(msg, level="INFO"):
@@ -87,10 +87,11 @@ def log(msg, level="INFO"):
     print(f"[{ts}] [{level}] {msg}", flush=True)
 
 
-# ─── Step 1: Download ──────────────────────────────────────────────
-def download_video(url: str, output_dir: str) -> str:
-    """Download video from URL."""
-    log(f"📥 Downloading: {url}")
+# ─── Pipeline Steps ────────────────────────────────────────────────
+
+def step_download(url: str, output_dir: str) -> str:
+    """Step 1: Download video."""
+    log("📥 Step 1: Downloading video...")
     output_path = os.path.join(output_dir, "source")
     
     cmd = (
@@ -98,7 +99,7 @@ def download_video(url: str, output_dir: str) -> str:
         f'--merge-output-format mp4 --no-watermark '
         f'-o "{output_path}.%(ext)s" "{url}" 2>&1'
     )
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=600)
+    subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=600)
     
     for ext in ["mp4", "webm", "mkv"]:
         path = f"{output_path}.{ext}"
@@ -106,13 +107,12 @@ def download_video(url: str, output_dir: str) -> str:
             log(f"  ✅ Downloaded: {os.path.basename(path)}")
             return path
     
-    raise FileNotFoundError(f"Download failed: {result.stderr[:300]}")
+    raise FileNotFoundError("Download failed")
 
 
-# ─── Step 2: Extract Audio ─────────────────────────────────────────
-def extract_audio(video_path: str, output_dir: str) -> str:
-    """Extract audio from video."""
-    log("🔊 Extracting audio...")
+def step_extract_audio(video_path: str, output_dir: str) -> str:
+    """Step 2: Extract audio."""
+    log("🔊 Step 2: Extracting audio...")
     audio_path = os.path.join(output_dir, "audio_original.wav")
     
     cmd = (
@@ -128,13 +128,9 @@ def extract_audio(video_path: str, output_dir: str) -> str:
     raise FileNotFoundError("Audio extraction failed")
 
 
-# ─── Step 3: Transcribe (Word-level timestamps) ───────────────────
-def transcribe(audio_path: str, source_lang: str = "zh", config: DubConfig = None) -> list[Segment]:
-    """Transcribe with word-level timestamps for precise sync."""
-    log(f"📝 Transcribing ({source_lang}) with word-level timestamps...")
-    
-    if config is None:
-        config = DubConfig()
+def step_transcribe(audio_path: str, source_lang: str, config: DubConfig) -> list[dict]:
+    """Step 3: Transcribe with word-level timestamps."""
+    log(f"📝 Step 3: Transcribing ({source_lang})...")
     
     device = config.whisper_device
     if device == "auto":
@@ -153,35 +149,38 @@ def transcribe(audio_path: str, source_lang: str = "zh", config: DubConfig = Non
         language=source_lang,
         beam_size=5,
         vad_filter=True,
-        word_timestamps=True,  # Key for sync!
+        word_timestamps=True,
     )
     
     result = []
     for i, seg in enumerate(segments):
-        segment = Segment(
-            index=i,
-            start=seg.start,
-            end=seg.end,
-            text=seg.text.strip(),
-        )
-        result.append(segment)
+        result.append({
+            "index": i,
+            "start": seg.start,
+            "end": seg.end,
+            "text": seg.text.strip(),
+            "text_vi": "",
+            "tts_path": "",
+            "tts_duration": 0.0,
+            "synced_path": "",
+            "speed_factor": 1.0,
+        })
         log(f"  [{seg.start:.2f}s-{seg.end:.2f}s] {seg.text.strip()[:50]}")
     
-    log(f"  ✅ {len(result)} segments ({info.language}, prob={info.language_probability:.2f})")
+    log(f"  ✅ {len(result)} segments")
     return result
 
 
-# ─── Step 4: Translate ─────────────────────────────────────────────
-def translate(segments: list[Segment], source_lang: str, target_lang: str, config: DubConfig) -> list[Segment]:
-    """Translate segments using MiMo API."""
-    log(f"🌐 Translating {source_lang} → {target_lang}...")
+def step_translate(segments: list[dict], source_lang: str, target_lang: str, config: DubConfig) -> list[dict]:
+    """Step 4: Translate using MiMo API."""
+    log(f"🌐 Step 4: Translating {source_lang} → {target_lang}...")
     
     if not config.mimo_api_key:
         log("  ⚠️ No MIMO_API_KEY, skipping translation")
         return segments
     
     # Batch translate for context
-    numbered = "\n".join(f"{i+1}. {s.text}" for i, s in enumerate(segments))
+    numbered = "\n".join(f"{i+1}. {s['text']}" for i, s in enumerate(segments))
     
     prompt = f"""Translate the following {source_lang} dialogue to {target_lang}.
 Keep the EXACT same numbering (1. 2. 3. etc).
@@ -193,7 +192,7 @@ Only output the numbered translations, nothing else.
     payload = {
         "model": config.mimo_model,
         "messages": [
-            {"role": "system", "content": f"Professional {source_lang} to {target_lang} translator for video dubbing. Natural, conversational, emotional."},
+            {"role": "system", "content": f"Professional {source_lang} to {target_lang} translator for video dubbing. Natural, conversational, emotional. Preserve cultural context."},
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.3,
@@ -221,9 +220,9 @@ Only output the numbered translations, nothing else.
         
         for i, seg in enumerate(segments):
             if i < len(translations):
-                seg.text_vi = translations[i]
+                seg["text_vi"] = translations[i]
             else:
-                seg.text_vi = seg.text
+                seg["text_vi"] = seg["text"]
         
         log(f"  ✅ Translated {len(segments)} segments")
         return segments
@@ -233,225 +232,218 @@ Only output the numbered translations, nothing else.
         return segments
 
 
-# ─── Step 5: TTS ───────────────────────────────────────────────────
-def generate_tts(segments: list[Segment], output_dir: str, config: DubConfig) -> list[Segment]:
-    """Generate TTS for each segment."""
-    log(f"🗣️ Generating TTS ({config.tts_engine})...")
+def step_tts(segments: list[dict], output_dir: str, config: DubConfig) -> list[dict]:
+    """Step 5: Generate TTS with voice cloning."""
+    log(f"🗣️ Step 5: Generating TTS ({config.tts_engine})...")
     
     tts_dir = os.path.join(output_dir, "tts")
     os.makedirs(tts_dir, exist_ok=True)
     
-    for seg in segments:
-        text = seg.text_vi or seg.text
-        if not text:
-            continue
+    if config.tts_engine == "omnivoice" and config.omnivoice_url:
+        tts_config = TTSConfig(
+            api_url=config.omnivoice_url,
+            api_key=config.omnivoice_key,
+            voice_instruct=config.tts_instruct,
+            ref_audio=config.tts_ref_audio,
+            ref_text=config.tts_ref_text,
+            emotion=config.tts_emotion,
+            speed=config.tts_speed,
+            normalize=config.normalize_audio,
+        )
+        tts = ProfessionalTTS(tts_config)
         
-        tts_path = os.path.join(tts_dir, f"seg_{seg.index:04d}.wav")
-        
-        if config.tts_engine == "omnivoice" and config.omnivoice_url:
-            _tts_omnivoice_remote(text, tts_path, config)
-        elif config.tts_engine == "edge":
-            _tts_edge(text, tts_path, config)
-        else:
-            _tts_edge(text, tts_path, config)
-        
-        seg.tts_path = tts_path
-        
-        # Get TTS duration
-        if os.path.exists(tts_path):
-            seg.tts_duration = _get_audio_duration(tts_path)
-            log(f"  [{seg.index}] ✅ {seg.tts_duration:.2f}s — {text[:30]}...")
-        else:
-            log(f"  [{seg.index}] ❌ Failed")
+        for seg in segments:
+            text = seg.get("text_vi") or seg["text"]
+            if not text:
+                continue
+            
+            tts_path = os.path.join(tts_dir, f"seg_{seg['index']:04d}.wav")
+            
+            try:
+                tts.generate(text, tts_path, emotion=config.tts_emotion)
+                seg["tts_path"] = tts_path
+                seg["tts_duration"] = tts.get_duration(tts_path)
+                log(f"  [{seg['index']}] ✅ {seg['tts_duration']:.2f}s — {text[:30]}...")
+            except Exception as e:
+                log(f"  [{seg['index']}] ❌ {e}")
+    
+    else:
+        # Fallback to Edge TTS
+        _tts_edge_batch(segments, tts_dir, config)
     
     return segments
 
 
-def _tts_omnivoice_remote(text: str, output_path: str, config: DubConfig):
-    """TTS via remote OmniVoice API."""
-    try:
-        url = config.omnivoice_url.rstrip("/") + "/tts"
-        headers = {}
-        if config.omnivoice_key:
-            headers["Authorization"] = f"Bearer {config.omnivoice_key}"
+def _tts_edge_batch(segments: list[dict], tts_dir: str, config: DubConfig):
+    """Batch TTS using Edge TTS."""
+    import edge_tts
+    import asyncio
+    
+    for seg in segments:
+        text = seg.get("text_vi") or seg["text"]
+        if not text:
+            continue
         
-        payload = {
-            "text": text,
-            "speed": config.tts_speed,
-            "format": "wav",
-        }
+        tts_path = os.path.join(tts_dir, f"seg_{seg['index']:04d}.wav")
+        mp3_path = tts_path.replace(".wav", ".mp3")
         
-        if config.tts_ref_audio and os.path.exists(config.tts_ref_audio):
-            with open(config.tts_ref_audio, "rb") as f:
-                payload["ref_audio"] = base64.b64encode(f.read()).decode()
-            if config.tts_ref_text:
-                payload["ref_text"] = config.tts_ref_text
-        else:
-            payload["instruct"] = config.tts_instruct
-        
-        resp = requests.post(url, json=payload, headers=headers, timeout=300)
-        resp.raise_for_status()
-        
-        with open(output_path, "wb") as f:
-            f.write(resp.content)
-        
-    except Exception as e:
-        log(f"    OmniVoice error: {e}")
-        _tts_edge(text, output_path, config)
-
-
-def _tts_edge(text: str, output_path: str, config: DubConfig):
-    """TTS via Edge TTS."""
-    try:
-        import edge_tts
-        import asyncio
-        
-        async def _gen():
-            comm = edge_tts.Communicate(text, config.tts_voice)
-            mp3_path = output_path.replace(".wav", ".mp3")
-            await comm.save(mp3_path)
+        try:
+            async def _gen():
+                comm = edge_tts.Communicate(text, "vi-VN-HoaiMyNeural")
+                await comm.save(mp3_path)
+            
+            asyncio.run(_gen())
+            
+            # Convert to WAV
             subprocess.run(
-                f'ffmpeg -i "{mp3_path}" -ar {config.output_sample_rate} -ac {config.output_channels} -y "{output_path}" 2>/dev/null',
-                shell=True,
+                f'ffmpeg -i "{mp3_path}" -ar 24000 -ac 1 -y "{tts_path}" 2>/dev/null',
+                shell=True, timeout=30,
             )
             if os.path.exists(mp3_path):
                 os.remove(mp3_path)
-        
-        asyncio.run(_gen())
-    except Exception as e:
-        log(f"    Edge TTS error: {e}")
+            
+            seg["tts_path"] = tts_path
+            
+            # Get duration
+            out = subprocess.run(
+                f'ffprobe -v error -show_entries format=duration -of csv=p=0 "{tts_path}"',
+                shell=True, capture_output=True, text=True,
+            ).stdout.strip()
+            seg["tts_duration"] = float(out) if out else 0.0
+            
+            log(f"  [{seg['index']}] ✅ {seg['tts_duration']:.2f}s — {text[:30]}...")
+            
+        except Exception as e:
+            log(f"  [{seg['index']}] ❌ {e}")
 
 
-def _get_audio_duration(path: str) -> float:
-    """Get audio duration in seconds."""
-    try:
-        result = subprocess.run(
-            f'ffprobe -v error -show_entries format=duration -of csv=p=0 "{path}"',
-            shell=True, capture_output=True, text=True, timeout=10,
-        )
-        return float(result.stdout.strip() or "0")
-    except:
-        return 0.0
-
-
-# ─── Step 6: Voice Sync (THE KEY FEATURE) ─────────────────────────
-def sync_voices(segments: list[Segment], output_dir: str, config: DubConfig) -> list[Segment]:
-    """
-    Sync TTS audio to match original video timing.
-    
-    For each segment:
-    - If TTS is longer than original → speed up (compress)
-    - If TTS is shorter than original → slow down (stretch) or pad silence
-    - Apply cross-fade between segments for smooth transitions
-    """
-    log("🎯 Syncing voice to video timing...")
+def step_sync(segments: list[dict], output_dir: str, config: DubConfig) -> list[dict]:
+    """Step 6: Sync TTS to match original timing."""
+    log("🎯 Step 6: Syncing voice to video timing...")
     
     sync_dir = os.path.join(output_dir, "synced")
     os.makedirs(sync_dir, exist_ok=True)
     
+    tts = ProfessionalTTS(TTSConfig()) if config.omnivoice_url else None
+    
     for seg in segments:
-        if not seg.tts_path or not os.path.exists(seg.tts_path):
+        if not seg.get("tts_path") or not os.path.exists(seg["tts_path"]):
             continue
         
-        target_duration = seg.end - seg.start
-        original_duration = seg.tts_duration
+        target_duration = seg["end"] - seg["start"]
+        original_duration = seg["tts_duration"]
         
         if original_duration <= 0 or target_duration <= 0:
             continue
         
-        # Calculate speed factor
-        speed_factor = original_duration / target_duration
+        synced_path = os.path.join(sync_dir, f"seg_{seg['index']:04d}.wav")
         
-        synced_path = os.path.join(sync_dir, f"seg_{seg.index:04d}.wav")
+        if tts:
+            tts.adjust_speed(seg["tts_path"], synced_path, target_duration)
+        else:
+            # Direct ffmpeg atempo
+            speed_factor = original_duration / target_duration
+            speed_factor = max(0.5, min(2.0, speed_factor))
+            
+            filters = []
+            remaining = speed_factor
+            while remaining > 2.0:
+                filters.append("atempo=2.0")
+                remaining /= 2.0
+            while remaining < 0.5:
+                filters.append("atempo=0.5")
+                remaining /= 0.5
+            filters.append(f"atempo={remaining:.4f}")
+            
+            cmd = (
+                f'ffmpeg -i "{seg["tts_path"]}" '
+                f'-filter:a "{",".join(filters)}" '
+                f'-y "{synced_path}" 2>/dev/null'
+            )
+            subprocess.run(cmd, shell=True, timeout=60)
         
-        # Apply speed adjustment using ffmpeg atempo
-        # atempo range: 0.5 to 2.0, chain multiple for larger adjustments
-        _adjust_audio_speed(seg.tts_path, synced_path, speed_factor, config)
-        
-        seg.synced_path = synced_path
-        seg.speed_factor = speed_factor
+        seg["synced_path"] = synced_path
         
         # Get final duration
-        final_duration = _get_audio_duration(synced_path)
-        log(f"  [{seg.index}] {original_duration:.2f}s → {final_duration:.2f}s (target: {target_duration:.2f}s, speed: {speed_factor:.2f}x)")
+        out = subprocess.run(
+            f'ffprobe -v error -show_entries format=duration -of csv=p=0 "{synced_path}"',
+            shell=True, capture_output=True, text=True,
+        ).stdout.strip()
+        final_duration = float(out) if out else 0.0
+        
+        speed_factor = original_duration / target_duration if target_duration > 0 else 1.0
+        seg["speed_factor"] = speed_factor
+        
+        log(f"  [{seg['index']}] {original_duration:.2f}s → {final_duration:.2f}s (target: {target_duration:.2f}s, speed: {speed_factor:.2f}x)")
     
     return segments
 
 
-def _adjust_audio_speed(input_path: str, output_path: str, speed_factor: float, config: DubConfig):
-    """Adjust audio speed using ffmpeg atempo filter."""
-    # Clamp speed to valid range (0.5 - 2.0 per atempo, chain for larger)
-    if speed_factor < 0.5:
-        speed_factor = 0.5
-    elif speed_factor > 2.0:
-        speed_factor = 2.0
+def step_audio_process(segments: list[dict], output_dir: str, config: DubConfig) -> list[dict]:
+    """Step 7: Professional audio processing."""
+    log("🎚️ Step 7: Processing audio...")
     
-    # Build atempo filter chain
-    filters = []
-    remaining = speed_factor
-    while remaining > 2.0:
-        filters.append("atempo=2.0")
-        remaining /= 2.0
-    while remaining < 0.5:
-        filters.append("atempo=0.5")
-        remaining /= 0.5
-    filters.append(f"atempo={remaining:.4f}")
+    processed_dir = os.path.join(output_dir, "processed")
+    os.makedirs(processed_dir, exist_ok=True)
     
-    atempo_chain = ",".join(filters)
+    for seg in segments:
+        if not seg.get("synced_path") or not os.path.exists(seg["synced_path"]):
+            continue
+        
+        processed_path = os.path.join(processed_dir, f"seg_{seg['index']:04d}.wav")
+        
+        try:
+            process_dubbing_audio(
+                seg["synced_path"],
+                processed_path,
+                target_lufs=config.target_lufs,
+                compress=config.compress_audio,
+                noise_gate=config.noise_gate,
+                eq_profile=config.eq_profile,
+            )
+            seg["processed_path"] = processed_path
+            log(f"  [{seg['index']}] ✅ Processed")
+        except Exception as e:
+            log(f"  [{seg['index']}] ⚠️ Processing failed: {e}")
+            seg["processed_path"] = seg["synced_path"]
     
-    cmd = (
-        f'ffmpeg -i "{input_path}" '
-        f'-filter:a "{atempo_chain}" '
-        f'-ar {config.output_sample_rate} -ac {config.output_channels} '
-        f'-y "{output_path}" 2>/dev/null'
-    )
-    subprocess.run(cmd, shell=True, timeout=60)
+    return segments
 
 
-# ─── Step 7: Combine Audio ────────────────────────────────────────
-def combine_audio(segments: list[Segment], video_path: str, output_dir: str, config: DubConfig) -> str:
-    """Combine synced TTS segments into final audio track, mixed with original."""
-    log("🎵 Combining audio tracks...")
+def step_combine(segments: list[dict], video_path: str, output_dir: str, config: DubConfig) -> str:
+    """Step 8: Combine into final video."""
+    log("🎬 Step 8: Combining final video...")
     
-    # Get video duration
-    video_duration = _get_audio_duration(video_path)
-    
-    # Build ffmpeg filter complex for precise placement
-    inputs = ["-i", video_path]  # Input 0: video
-    filter_parts = []
-    audio_inputs = []
-    
-    valid_segments = [s for s in segments if s.synced_path and os.path.exists(s.synced_path)]
+    # Build audio track from segments
+    valid_segments = [s for s in segments if s.get("processed_path") and os.path.exists(s["processed_path"])]
     
     if not valid_segments:
-        log("  ⚠️ No synced segments, using original audio")
+        log("  ⚠️ No processed segments, using original")
         return video_path
     
+    # Create combined TTS audio with precise timing
+    tts_audio = os.path.join(output_dir, "tts_combined.wav")
+    
+    inputs = ["-i", video_path]
+    filter_parts = []
+    
     for i, seg in enumerate(valid_segments):
-        inputs.extend(["-i", seg.synced_path])
-        delay_ms = int(seg.start * 1000)
+        inputs.extend(["-i", seg["processed_path"]])
+        delay_ms = int(seg["start"] * 1000)
         filter_parts.append(
-            f"[{i+1}:a]adelay={delay_ms}|{delay_ms},aresample={config.output_sample_rate}[a{i}]"
+            f"[{i+1}:a]adelay={delay_ms}|{delay_ms},aresample=48000[a{i}]"
         )
-        audio_inputs.append(f"[a{i}]")
     
-    # Mix all TTS segments
-    mix_inputs = "".join(audio_inputs)
+    mix_inputs = "".join(f"[a{i}]" for i in range(len(valid_segments)))
     filter_parts.append(
-        f"{mix_inputs}amix=inputs={len(audio_inputs)}:duration=longest:normalize=0[out_tts]"
+        f"{mix_inputs}amix=inputs={len(valid_segments)}:duration=longest:normalize=0[out_tts]"
     )
-    
-    # Mix with original audio (lowered volume)
-    filter_parts.append(
-        f"[0:a]volume=0.15[bg]"
-    )
-    filter_parts.append(
-        f"[bg][out_tts]amix=inputs=2:duration=first[out]"
-    )
+    filter_parts.append(f"[0:a]volume=0.12[bg]")
+    filter_parts.append(f"[bg][out_tts]amix=inputs=2:duration=first[out]")
     
     filter_complex = ";".join(filter_parts)
     
-    output_video = os.path.join(output_dir, "dubbed.mp4")
+    output_video = os.path.join(output_dir, "dubbed_raw.mp4")
     
     cmd = (
         f'ffmpeg {" ".join(inputs)} '
@@ -461,36 +453,43 @@ def combine_audio(segments: list[Segment], video_path: str, output_dir: str, con
         f'-shortest '
         f'-y "{output_video}" 2>/dev/null'
     )
-    
     subprocess.run(cmd, shell=True, timeout=600)
     
-    if os.path.exists(output_video):
-        log(f"  ✅ Dubbed video: {os.path.basename(output_video)}")
-        return output_video
+    if not os.path.exists(output_video):
+        log("  ❌ Combine failed")
+        return video_path
     
-    log("  ❌ Combine failed")
-    return video_path
+    log(f"  ✅ Raw dubbed video created")
+    return output_video
 
 
-# ─── Step 8: Subtitles ────────────────────────────────────────────
-def generate_subtitles(segments: list[Segment], output_dir: str) -> str:
-    """Generate SRT subtitle file."""
-    log("📄 Generating subtitles...")
+def step_subtitles(segments: list[dict], video_path: str, output_dir: str, config: DubConfig) -> str:
+    """Step 9: Burn subtitles."""
+    log("📄 Step 9: Burning subtitles...")
     
+    # Generate SRT
     srt_path = os.path.join(output_dir, "subtitles.srt")
-    
     with open(srt_path, "w", encoding="utf-8") as f:
         for i, seg in enumerate(segments):
-            text = seg.text_vi or seg.text
+            text = seg.get("text_vi") or seg["text"]
             if not text:
                 continue
-            
-            start = _format_srt(seg.start)
-            end = _format_srt(seg.end)
+            start = _format_srt(seg["start"])
+            end = _format_srt(seg["end"])
             f.write(f"{i+1}\n{start} --> {end}\n{text}\n\n")
     
-    log(f"  ✅ Subtitles: {len(segments)} lines")
-    return srt_path
+    # Burn into video
+    output_video = os.path.join(output_dir, "dubbed.mp4")
+    
+    try:
+        SubtitleBurner.burn(video_path, srt_path, output_video, config.subtitle_style)
+        log(f"  ✅ Subtitles burned: {os.path.basename(output_video)}")
+    except Exception as e:
+        log(f"  ⚠️ Subtitle burn failed: {e}, using raw video")
+        import shutil
+        shutil.copy2(video_path, output_video)
+    
+    return output_video
 
 
 def _format_srt(seconds: float) -> str:
@@ -507,87 +506,76 @@ def run_pipeline(
     video_path: str = "",
     source_lang: str = "Chinese",
     target_lang: str = "Vietnamese",
-    config: DubConfig = None,
-    output_dir: str = "/tmp/dub_output",
-) -> DubResult:
-    """Run the full dubbing pipeline."""
+    config: DubConfig | None = None,
+) -> dict:
+    """Run the full professional dubbing pipeline."""
     if config is None:
         config = DubConfig()
     
+    output_dir = config.output_dir
     os.makedirs(output_dir, exist_ok=True)
-    start_time = time.time()
     
     lang_codes = {"Chinese": "zh", "Japanese": "ja", "Korean": "ko"}
     source_code = lang_codes.get(source_lang, "zh")
     
+    start_time = time.time()
+    
     try:
-        # Step 1: Download or use provided video
+        # Step 1: Download
         if url:
-            video_path = download_video(url, output_dir)
+            video_path = step_download(url, output_dir)
         
         if not video_path or not os.path.exists(video_path):
-            return DubResult(success=False, error="No video provided")
+            return {"success": False, "error": "No video provided"}
         
         # Step 2: Extract audio
-        audio_path = extract_audio(video_path, output_dir)
+        audio_path = step_extract_audio(video_path, output_dir)
         
         # Step 3: Transcribe
-        segments = transcribe(audio_path, source_code, config)
-        
-        # Save segments
-        _save_segments(segments, os.path.join(output_dir, "segments.json"))
+        segments = step_transcribe(audio_path, source_code, config)
+        _save_json(segments, os.path.join(output_dir, "segments.json"))
         
         # Step 4: Translate
-        segments = translate(segments, source_lang, target_lang, config)
-        
-        # Save translated
-        _save_segments(segments, os.path.join(output_dir, "translated.json"))
+        segments = step_translate(segments, source_lang, target_lang, config)
+        _save_json(segments, os.path.join(output_dir, "translated.json"))
         
         # Step 5: TTS
-        segments = generate_tts(segments, output_dir, config)
+        segments = step_tts(segments, output_dir, config)
         
         # Step 6: Voice Sync
-        segments = sync_voices(segments, output_dir, config)
+        segments = step_sync(segments, output_dir, config)
         
-        # Step 7: Combine
-        output_video = combine_audio(segments, video_path, output_dir, config)
+        # Step 7: Audio Processing
+        if config.normalize_audio or config.compress_audio:
+            segments = step_audio_process(segments, output_dir, config)
         
-        # Step 8: Subtitles
-        output_srt = generate_subtitles(segments, output_dir)
+        # Step 8: Combine
+        dubbed_video = step_combine(segments, video_path, output_dir, config)
+        
+        # Step 9: Subtitles
+        final_video = step_subtitles(segments, dubbed_video, output_dir, config)
         
         elapsed = time.time() - start_time
         log(f"\n🎉 Done in {elapsed:.0f}s!")
+        log(f"  📹 Video: {final_video}")
+        log(f"  📄 Subtitles: {os.path.join(output_dir, 'subtitles.srt')}")
         
-        return DubResult(
-            success=True,
-            output_video=output_video,
-            output_srt=output_srt,
-            segments=segments,
-            total_duration=video_duration if 'video_duration' in dir() else 0,
-            processing_time=elapsed,
-        )
+        return {
+            "success": True,
+            "output_video": final_video,
+            "output_srt": os.path.join(output_dir, "subtitles.srt"),
+            "segments": len(segments),
+            "processing_time": elapsed,
+        }
         
     except Exception as e:
         log(f"❌ Pipeline failed: {e}", "ERROR")
         import traceback
         traceback.print_exc()
-        return DubResult(success=False, error=str(e))
+        return {"success": False, "error": str(e)}
 
 
-def _save_segments(segments: list[Segment], path: str):
-    """Save segments to JSON."""
-    data = [
-        {
-            "index": s.index,
-            "start": s.start,
-            "end": s.end,
-            "text": s.text,
-            "text_vi": s.text_vi,
-            "tts_duration": s.tts_duration,
-            "speed_factor": s.speed_factor,
-        }
-        for s in segments
-    ]
+def _save_json(data, path):
     with open(path, "w") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
@@ -596,15 +584,19 @@ def _save_segments(segments: list[Segment], path: str):
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description="Video Dubbing Engine")
-    parser.add_argument("--url", default="", help="Video URL")
-    parser.add_argument("--video", default="", help="Local video path")
+    parser = argparse.ArgumentParser(description="Professional Dubbing Engine")
+    parser.add_argument("--url", default="")
+    parser.add_argument("--video", default="")
     parser.add_argument("--source-lang", default="Chinese")
     parser.add_argument("--target-lang", default="Vietnamese")
-    parser.add_argument("--tts-engine", default="omnivoice", choices=["omnivoice", "edge"])
-    parser.add_argument("--omnivoice-url", default="", help="OmniVoice API server URL")
-    parser.add_argument("--omnivoice-key", default="", help="OmniVoice API key")
-    parser.add_argument("--mimo-key", default="", help="MiMo API key")
+    parser.add_argument("--tts-engine", default="omnivoice")
+    parser.add_argument("--omnivoice-url", default="")
+    parser.add_argument("--omnivoice-key", default="")
+    parser.add_argument("--mimo-key", default="")
+    parser.add_argument("--voice-instruct", default="female, vietnamese accent, natural")
+    parser.add_argument("--ref-audio", default="")
+    parser.add_argument("--emotion", default="neutral")
+    parser.add_argument("--subtitle-style", default="professional")
     parser.add_argument("--output", default="/tmp/dub_output")
     args = parser.parse_args()
     
@@ -613,6 +605,11 @@ if __name__ == "__main__":
         omnivoice_url=args.omnivoice_url or os.getenv("OMNIVOICE_API_URL", ""),
         omnivoice_key=args.omnivoice_key or os.getenv("OMNIVOICE_API_KEY", ""),
         mimo_api_key=args.mimo_key or os.getenv("MIMO_API_KEY", ""),
+        tts_instruct=args.voice_instruct,
+        tts_ref_audio=args.ref_audio,
+        tts_emotion=args.emotion,
+        subtitle_style=args.subtitle_style,
+        output_dir=args.output,
     )
     
     result = run_pipeline(
@@ -621,12 +618,6 @@ if __name__ == "__main__":
         source_lang=args.source_lang,
         target_lang=args.target_lang,
         config=config,
-        output_dir=args.output,
     )
     
-    if result.success:
-        print(f"\n✅ Output: {result.output_video}")
-        print(f"📄 Subtitles: {result.output_srt}")
-    else:
-        print(f"\n❌ Failed: {result.error}")
-        sys.exit(1)
+    sys.exit(0 if result["success"] else 1)

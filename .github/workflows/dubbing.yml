@@ -1,4 +1,4 @@
-name: Donghua Dubbing Agent
+name: Professional Dubbing Agent
 
 on:
   workflow_dispatch:
@@ -25,7 +25,7 @@ on:
           - Vietnamese
           - English
       tts_engine:
-        description: 'TTS engine (omnivoice=voice cloning via API, edge=free cloud TTS)'
+        description: 'TTS engine'
         required: false
         type: choice
         default: 'omnivoice'
@@ -33,10 +33,32 @@ on:
           - omnivoice
           - edge
       voice_instruct:
-        description: 'Voice design prompt (for omnivoice)'
+        description: 'Voice design (omnivoice)'
         required: false
         type: string
         default: 'female, vietnamese accent, natural'
+      emotion:
+        description: 'Voice emotion'
+        required: false
+        type: choice
+        default: 'neutral'
+        options:
+          - neutral
+          - happy
+          - sad
+          - angry
+          - excited
+          - calm
+      subtitle_style:
+        description: 'Subtitle style'
+        required: false
+        type: choice
+        default: 'professional'
+        options:
+          - professional
+          - anime
+          - minimal
+          - default
 
 permissions:
   contents: write
@@ -57,12 +79,14 @@ jobs:
       - name: Test imports
         run: |
           python -c "from engines.dubbing_engine import run_pipeline, DubConfig; print('Engine OK')"
-          python -c "import yt_dlp, edge_tts, faster_whisper; print('Deps OK')"
+          python -c "from engines.audio_processor import normalize_loudness, compress_dynamics; print('Audio OK')"
+          python -c "from engines.tts_engine import ProfessionalTTS, TTSConfig; print('TTS OK')"
+          python -c "from engines.video_compositor import SubtitleBurner, AudioMixer; print('Video OK')"
 
   dub:
     needs: test
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -78,6 +102,9 @@ jobs:
           SOURCE_LANG: ${{ github.event.inputs.source_lang }}
           TARGET_LANG: ${{ github.event.inputs.target_lang }}
           TTS_ENGINE: ${{ github.event.inputs.tts_engine }}
+          VOICE_INSTRUCT: ${{ github.event.inputs.voice_instruct }}
+          EMOTION: ${{ github.event.inputs.emotion }}
+          SUBTITLE_STYLE: ${{ github.event.inputs.subtitle_style }}
           MIMO_API_KEY: ${{ secrets.MIMO_API_KEY }}
           MIMO_API_BASE: ${{ secrets.MIMO_API_BASE || 'https://api.xiaomimimo.com/v1' }}
           MIMO_MODEL: ${{ secrets.MIMO_MODEL || 'mimo-v2.5-pro' }}
@@ -92,6 +119,9 @@ jobs:
             --omnivoice-url "$OMNIVOICE_API_URL" \
             --omnivoice-key "$OMNIVOICE_API_KEY" \
             --mimo-key "$MIMO_API_KEY" \
+            --voice-instruct "$VOICE_INSTRUCT" \
+            --emotion "$EMOTION" \
+            --subtitle-style "$SUBTITLE_STYLE" \
             --output /tmp/output
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
