@@ -1,0 +1,20 @@
+{
+  "name": "omnivoice-tts",
+  "version": "1.0.0",
+  "description": "OmniVoice TTS provider for OpenClaw — voice cloning + 600 languages",
+  "author": "openclaw-mimo",
+  "license": "MIT",
+  "type": "tool",
+  "contracts": {
+    "tools": ["tts"]
+  },
+  "entry": "plugin.js",
+  "config": {
+    "omnivoice": {
+      "model": "k2-fsa/OmniVoice",
+      "device": "cpu",
+      "defaultMode": "design",
+      "defaultInstruct": "female, vietnamese accent, natural"
+    }
+  }
+}
