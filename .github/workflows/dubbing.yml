@@ -81,9 +81,8 @@ jobs:
   # ─── Job 2: Dubbing pipeline (GPU available) ──────────────────
   dub:
     needs: test
-    # Use ubuntu-latest for edge TTS (no GPU needed)
-    # For omnivoice with GPU, use: [self-hosted, gpu]
-    runs-on: ${{ github.event.inputs.tts_engine == 'omnivoice' && fromJSON('["self-hosted", "gpu"]') || 'ubuntu-latest' }}
+    # No GPU needed — OmniVoice runs on remote API server
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -97,17 +96,9 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg
 
-      - name: Install Python deps (CPU)
-        if: github.event.inputs.tts_engine != 'omnivoice'
+      - name: Install Python deps
         run: |
           pip install -q yt-dlp edge-tts faster-whisper pydub numpy pillow requests
-
-      - name: Install Python deps (GPU + OmniVoice)
-        if: github.event.inputs.tts_engine == 'omnivoice'
-        run: |
-          pip install -q yt-dlp faster-whisper pydub numpy pillow requests
-          pip install -q torch torchaudio --index-url https://download.pytorch.org/whl/cu121
-          pip install -q omnivoice soundfile
 
       - name: Run dubbing pipeline
         env:
@@ -118,6 +109,8 @@ jobs:
           MIMO_API_KEY: ${{ secrets.MIMO_API_KEY }}
           MIMO_API_BASE: ${{ secrets.MIMO_API_BASE || 'https://api.xiaomimimo.com/v1' }}
           MIMO_MODEL: ${{ secrets.MIMO_MODEL || 'mimo-v2.5-pro' }}
+          OMNIVOICE_API_URL: ${{ secrets.OMNIVOICE_API_URL }}
+          OMNIVOICE_API_KEY: ${{ secrets.OMNIVOICE_API_KEY }}
         run: |
           python dubbing.py \
             --url "$VIDEO_URL" \

@@ -27,7 +27,10 @@ WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "auto")  # auto, cuda, cpu
 MIMO_API_KEY = os.getenv("MIMO_API_KEY", "")
 MIMO_API_BASE = os.getenv("MIMO_API_BASE", "https://api.xiaomimimo.com/v1")
 MIMO_MODEL = os.getenv("MIMO_MODEL", "mimo-v2.5-pro")
-TTS_ENGINE = os.getenv("TTS_ENGINE", "omnivoice")
+TTS_ENGINE = os.getenv("TTS_ENGINE", "edge")  # edge or omnivoice
+# OmniVoice remote API server
+OMNIVOICE_API_URL = os.getenv("OMNIVOICE_API_URL", "")  # e.g. http://your-gpu-server:8880
+OMNIVOICE_API_KEY = os.getenv("OMNIVOICE_API_KEY", "")
 
 # Language codes
 LANG_CODES = {
@@ -242,33 +245,39 @@ def generate_tts(transcript, output_dir, engine="omnivoice"):
     return transcript
 
 
-def _tts_omnivoice(text, output_path):
-    """TTS using OmniVoice (needs GPU)."""
+def _tts_omnivoice(text, output_path, voice_preset="", ref_audio="", ref_text="", language="Vietnamese"):
+    """TTS using OmniVoice remote API (GPU server)."""
+    if not OMNIVOICE_API_URL:
+        log("    ⚠️ No OMNIVOICE_API_URL set, falling back to Edge TTS")
+        _tts_edge(text, output_path)
+        return
+    
     try:
-        import torch
-        from omnivoice import OmniVoice
-        import soundfile as sf
+        # Import client from server directory
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "omnivoice-server"))
+        from client import OmniVoiceClient
         
-        # Lazy load model
-        if not hasattr(_tts_omnivoice, "_model"):
-            log("    Loading OmniVoice model...")
-            _tts_omnivoice._model = OmniVoice.from_pretrained(
-                "k2-fsa/OmniVoice",
-                device_map="cuda" if torch.cuda.is_available() else "cpu",
-                dtype=torch.float32,
-            )
-            log("    ✅ OmniVoice model loaded")
+        client = OmniVoiceClient(OMNIVOICE_API_URL, api_key=OMNIVOICE_API_KEY)
         
-        audio = _tts_omnivoice._model.generate(
-            text=text,
-            language="Vietnamese",
-            speed=1.0,
-        )
-        sf.write(output_path, audio[0], _tts_omnivoice._model.sampling_rate)
+        kwargs = {
+            "language": language,
+            "speed": 1.0,
+            "format": "wav",
+        }
+        
+        if voice_preset:
+            kwargs["voice_preset"] = voice_preset
+        elif ref_audio and os.path.exists(ref_audio):
+            kwargs["ref_audio"] = ref_audio
+            if ref_text:
+                kwargs["ref_text"] = ref_text
+        else:
+            kwargs["instruct"] = "female, vietnamese accent, natural"
+        
+        client.generate_and_save(text, output_path, **kwargs)
         
     except Exception as e:
-        log(f"    OmniVoice error: {e}")
-        # Fallback to edge
+        log(f"    OmniVoice API error: {e}")
         _tts_edge(text, output_path)
 
 
