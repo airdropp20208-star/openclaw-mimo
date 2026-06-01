@@ -643,3 +643,285 @@ OmniVoice modes: ref_audio (clone), instruct (design), auto
 Vietnamese voices (edge): vi-VN-HoaiMyNeural (female), vi-VN-NamMinhNeural (male)"""
     },
 }
+
+
+# ============================================================
+# VIDEO DUBBING (Whisper + MiMo + TTS)
+# ============================================================
+
+def video_dub(
+    video_path: str,
+    output_path: str = "",
+    source_lang: str = "zh",
+    target_lang: str = "vi",
+    api_key: str = "",
+    api_base: str = "https://api.xiaomimimo.com/v1",
+    model: str = "mimo-v2.5",
+    tts_engine: str = "edge",
+    tts_voice: str = "vi-VN-HoaiMyNeural",
+    keep_original: bool = False,
+    **kwargs
+) -> dict:
+    """
+    Dub video: transcribe → translate → TTS → combine.
+    
+    Args:
+        video_path: Input video file or YouTube URL
+        source_lang: Source language (zh, en, ja, ko, etc.)
+        target_lang: Target language (vi for Vietnamese)
+        api_key: MiMo API key for translation
+        tts_engine: TTS engine (edge, omnivoice)
+        tts_voice: Voice for edge TTS
+        keep_original: Keep original audio mixed with dubbed
+    """
+    import os, time, subprocess, json, re
+    from pathlib import Path
+    
+    if not video_path:
+        return {"success": False, "output": "No video provided"}
+    
+    if not output_path:
+        output_path = f"/tmp/dubbed_{int(time.time())}.mp4"
+    
+    work_dir = f"/tmp/dub_work_{int(time.time())}"
+    os.makedirs(work_dir, exist_ok=True)
+    
+    try:
+        # Step 0: Download YouTube if URL
+        if "youtube.com" in video_path or "youtu.be" in video_path:
+            print("📥 Downloading from YouTube...")
+            yt_cmd = [
+                "yt-dlp", "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+                "-o", f"{work_dir}/input.%(ext)s",
+                "--merge-output-format", "mp4",
+                video_path
+            ]
+            result = subprocess.run(yt_cmd, capture_output=True, text=True, timeout=300)
+            # Find downloaded file
+            for f in os.listdir(work_dir):
+                if f.startswith("input."):
+                    video_path = os.path.join(work_dir, f)
+                    break
+            if not os.path.exists(video_path):
+                return {"success": False, "output": f"YouTube download failed: {result.stderr[:500]}"}
+            print(f"  ✅ Downloaded: {video_path}")
+        
+        if not os.path.exists(video_path):
+            return {"success": False, "output": f"Video not found: {video_path}"}
+        
+        # Step 1: Extract audio
+        print("[1/5] Extracting audio...")
+        audio_path = f"{work_dir}/audio.wav"
+        cmd = f'ffmpeg -i {shlex.quote(video_path)} -vn -acodec pcm_s16le -ar 16000 -ac 1 -y {shlex.quote(audio_path)}'
+        subprocess.run(cmd, shell=True, capture_output=True, timeout=120)
+        if not os.path.exists(audio_path):
+            return {"success": False, "output": "Failed to extract audio"}
+        print("  ✅ Audio extracted")
+        
+        # Step 2: Transcribe with Whisper
+        print("[2/5] Transcribing with Whisper...")
+        from faster_whisper import WhisperModel
+        
+        device = "cpu"
+        try:
+            import torch
+            if torch.cuda.is_available():
+                device = "cuda:0"
+        except Exception:
+            pass
+        
+        compute = "float16" if "cuda" in device else "int8"
+        whisper_model = WhisperModel("large-v3", device=device, compute_type=compute,
+                                     download_root=str(Path.home() / ".cache" / "whisper"))
+        
+        segments, info = whisper_model.transcribe(
+            audio_path, language=source_lang, vad_filter=True, beam_size=5
+        )
+        
+        texts, timings = [], []
+        for seg in segments:
+            texts.append(seg.text.strip())
+            timings.append([seg.start, seg.end])
+        
+        print(f"  ✅ {len(texts)} segments transcribed")
+        
+        if not texts:
+            return {"success": False, "output": "No speech detected in video"}
+        
+        # Step 3: Translate with MiMo
+        print("[3/5] Translating with MiMo...")
+        import urllib.request
+        
+        translated = []
+        for i in range(0, len(texts), 50):
+            batch = texts[i:i+50]
+            numbered = "\n".join(f"{j+1}. {t}" for j, t in enumerate(batch))
+            
+            prompt = f"""Translate these numbered lines from {source_lang} to {target_lang}.
+Rules: Only output translations, numbered. Natural phrasing, not literal.
+
+{numbered}"""
+            
+            payload = json.dumps({
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": f"You are a professional video translator. Translate from {source_lang} to {target_lang}."},
+                    {"role": "user", "content": prompt}
+                ],
+                "max_tokens": 4000,
+                "temperature": 0.3
+            }).encode()
+            
+            req = urllib.request.Request(
+                f"{api_base}/chat/completions",
+                data=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                },
+            )
+            
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                result = json.loads(resp.read())
+                content = result["choices"][0]["message"]["content"]
+                
+                # Parse numbered translations
+                for line in content.strip().split("\n"):
+                    line = line.strip()
+                    match = re.match(r"^\d+[\.\)]\s*(.+)", line)
+                    if match:
+                        translated.append(match.group(1).strip())
+        
+        # Pad if needed
+        while len(translated) < len(texts):
+            translated.append(texts[len(translated)] if len(translated) < len(texts) else "")
+        
+        print(f"  ✅ {len(translated)} segments translated")
+        
+        # Step 4: Generate TTS
+        print("[4/5] Generating TTS...")
+        tts_segments = []
+        
+        for i, (text, timing) in enumerate(zip(translated, timings)):
+            if not text:
+                continue
+            
+            tts_path = f"{work_dir}/tts_{i:04d}.mp3"
+            
+            if tts_engine == "edge":
+                result = tts_generate(text, tts_path, engine="edge", voice=tts_voice)
+            else:
+                result = tts_generate(text, tts_path, engine="omnivoice")
+            
+            if result["success"] and os.path.exists(tts_path):
+                tts_segments.append({
+                    "file": tts_path,
+                    "start": timing[0],
+                    "end": timing[1],
+                    "text": text
+                })
+        
+        print(f"  ✅ {len(tts_segments)} TTS segments generated")
+        
+        if not tts_segments:
+            return {"success": False, "output": "TTS generation failed"}
+        
+        # Step 5: Combine audio with video
+        print("[5/5] Combining audio with video...")
+        
+        # Build filter to place TTS at correct timestamps
+        filter_inputs = ""
+        filter_complex = ""
+        
+        for i, seg in enumerate(tts_segments):
+            filter_inputs += f" -i {shlex.quote(seg['file'])}"
+            delay_ms = int(seg["start"] * 1000)
+            filter_complex += f"[{i}:a]adelay={delay_ms}|{delay_ms},aresample=44100[a{i}];"
+        
+        # Mix all delayed segments
+        mix_inputs = "".join(f"[a{i}]" for i in range(len(tts_segments)))
+        filter_complex += f"{mix_inputs}amix=inputs={len(tts_segments)}:duration=longest[voice];"
+        
+        if keep_original:
+            filter_complex += f"[0:a]aresample=44100[orig];[orig][voice]amix=inputs=2:duration=first[out]"
+        else:
+            filter_complex += f"[voice]aresample=44100[out]"
+        
+        output_audio = f"{work_dir}/dubbed_audio.wav"
+        full_cmd = f'ffmpeg -i {shlex.quote(video_path)} {filter_inputs} -filter_complex "{filter_complex}" -map "[out]" -y {shlex.quote(output_audio)}'
+        subprocess.run(full_cmd, shell=True, capture_output=True, timeout=120)
+        
+        if not os.path.exists(output_audio):
+            # Fallback: use first TTS segment
+            output_audio = tts_segments[0]["file"]
+        
+        # Replace video audio
+        final_cmd = f'ffmpeg -i {shlex.quote(video_path)} -i {shlex.quote(output_audio)} -c:v copy -map 0:v:0 -map 1:a:0 -shortest -y {shlex.quote(output_path)}'
+        subprocess.run(final_cmd, shell=True, capture_output=True, timeout=120)
+        
+        # Cleanup
+        import shutil
+        shutil.rmtree(work_dir, ignore_errors=True)
+        
+        if os.path.exists(output_path):
+            size = os.path.getsize(output_path)
+            return {
+                "success": True,
+                "output": f"✅ Video dubbed ({source_lang}→{target_lang})\n📝 {len(translated)} segments\n📁 {output_path} ({size/(1024*1024):.1f} MB)",
+                "file": output_path
+            }
+        
+        return {"success": False, "output": "Failed to create final video"}
+        
+    except Exception as e:
+        import shutil
+        shutil.rmtree(work_dir, ignore_errors=True)
+        return {"success": False, "output": f"Dubbing error: {str(e)[:500]}"}
+
+
+def youtube_download(url: str, output_path: str = "") -> dict:
+    """Download video from YouTube."""
+    import subprocess, os, time
+    
+    if not output_path:
+        output_path = f"/tmp/ytdl_{int(time.time())}.mp4"
+    
+    work_dir = f"/tmp/ytdl_{int(time.time())}"
+    os.makedirs(work_dir, exist_ok=True)
+    
+    try:
+        cmd = [
+            "yt-dlp", "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "-o", f"{work_dir}/video.%(ext)s",
+            "--merge-output-format", "mp4",
+            url
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        
+        for f in os.listdir(work_dir):
+            if f.startswith("video."):
+                src = os.path.join(work_dir, f)
+                os.rename(src, output_path)
+                break
+        
+        if os.path.exists(output_path):
+            size = os.path.getsize(output_path)
+            return {"success": True, "output": f"✅ Downloaded -> {output_path} ({size/(1024*1024):.1f} MB)", "file": output_path}
+        
+        return {"success": False, "output": f"Download failed: {result.stderr[:500]}"}
+    except Exception as e:
+        return {"success": False, "output": f"Download error: {str(e)[:500]}"}
+
+
+# Add to VIDEO_TOOLS
+VIDEO_TOOLS["video_dub"] = {
+    "fn": video_dub,
+    "description": """Dub video: transcribe → translate → TTS → combine.
+Args: {video_path: str, source_lang: str, target_lang: str, api_key: str, ...}
+Supports YouTube URLs directly.
+Languages: zh (Chinese), en (English), ja (Japanese), ko (Korean) → vi (Vietnamese)"""
+}
+VIDEO_TOOLS["youtube_download"] = {
+    "fn": youtube_download,
+    "description": "Download YouTube video. Args: {url: str, output_path?: str}"
+}
