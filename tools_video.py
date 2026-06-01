@@ -4,7 +4,7 @@ Video Editing & TTS Tools for OpenClaw MiMo Agent.
 Tools:
 - video_edit: Cut, trim, merge, add subtitles, overlay text on video
 - video_info: Get video metadata (duration, resolution, codec)
-- tts_generate: Generate Vietnamese speech from text using OmniVoice/gTTS
+- tts_generate: Generate Vietnamese speech using OmniVoice (voice cloning) or Edge TTS fallback
 - video_composite: Advanced composition (picture-in-picture, watermark, transitions)
 
 All tools return {"success": bool, "output": str, "file": str optional}
@@ -334,8 +334,34 @@ def _video_rotate(video_path, output_path, degrees):
 
 
 # ============================================================
-# TTS - Text to Speech (Vietnamese)
+# TTS - Text to Speech (OmniVoice + Edge TTS fallback)
 # ============================================================
+
+# Lazy-loaded OmniVoice model
+_omnivoice_model = None
+
+def _get_omnivoice_model():
+    """Lazy-load OmniVoice model (downloads on first use)."""
+    global _omnivoice_model
+    if _omnivoice_model is not None:
+        return _omnivoice_model
+    
+    try:
+        import torch
+        from omnivoice import OmniVoice
+        
+        print("🔄 Loading OmniVoice model (first time may take 2-5 minutes)...")
+        _omnivoice_model = OmniVoice.from_pretrained(
+            "k2-fsa/OmniVoice",
+            device_map="cpu",  # Use CPU if no GPU
+            dtype=torch.float32
+        )
+        print("✅ OmniVoice model loaded!")
+        return _omnivoice_model
+    except Exception as e:
+        print(f"⚠️ OmniVoice load failed: {e}")
+        return None
+
 
 def tts_generate(
     text: str,
@@ -343,14 +369,25 @@ def tts_generate(
     voice: str = "vi-VN-HoaiMyNeural",
     rate: str = "+0%",
     pitch: str = "+0Hz",
-    engine: str = "edge"
+    engine: str = "omnivoice",
+    ref_audio: str = "",
+    ref_text: str = "",
+    instruct: str = "",
+    speed: float = 1.0,
+    **kwargs
 ) -> dict:
     """
     Generate speech from text.
     
     Engines:
+    - omnivoice: OmniVoice TTS (voice cloning + voice design) [DEFAULT]
     - edge: Microsoft Edge TTS (free, good Vietnamese voices)
     - gtts: Google TTS (free, basic quality)
+    
+    OmniVoice Modes:
+    1. Voice Cloning: Provide ref_audio + ref_text (or auto-transcribe)
+    2. Voice Design: Provide instruct (e.g., "female, vietnamese accent")
+    3. Auto Voice: Just text, model chooses automatically
     
     Vietnamese voices (edge engine):
     - vi-VN-HoaiMyNeural (female, natural)
@@ -360,23 +397,73 @@ def tts_generate(
         return {"success": False, "output": "No text provided"}
     
     if not output_path:
-        output_path = f"/tmp/tts_{int(time.time())}.mp3"
+        output_path = f"/tmp/tts_{int(time.time())}.wav"
     
     engine = engine.lower().strip()
     
     try:
-        if engine == "edge":
+        if engine == "omnivoice":
+            return _tts_omnivoice(text, output_path, ref_audio, ref_text, instruct, speed)
+        elif engine == "edge":
             return _tts_edge(text, output_path, voice, rate, pitch)
         elif engine == "gtts":
             return _tts_gtts(text, output_path)
         else:
-            return {"success": False, "output": f"Unknown engine: {engine}. Use 'edge' or 'gtts'"}
+            return {"success": False, "output": f"Unknown engine: {engine}. Use 'omnivoice', 'edge', or 'gtts'"}
     except Exception as e:
         return {"success": False, "output": f"TTS error: {str(e)[:500]}"}
 
 
+def _tts_omnivoice(text, output_path, ref_audio, ref_text, instruct, speed):
+    """OmniVoice TTS - Voice Cloning & Design."""
+    model = _get_omnivoice_model()
+    if model is None:
+        return {"success": False, "output": "OmniVoice model not available. Use engine='edge' as fallback."}
+    
+    try:
+        import torch
+        import soundfile as sf
+        
+        # Prepare generation kwargs
+        gen_kwargs = {"text": text, "speed": speed}
+        
+        # Mode 1: Voice Cloning (reference audio)
+        if ref_audio and os.path.exists(ref_audio):
+            gen_kwargs["ref_audio"] = ref_audio
+            if ref_text:
+                gen_kwargs["ref_text"] = ref_text
+            mode = "Voice Cloning"
+        # Mode 2: Voice Design (instruct)
+        elif instruct:
+            gen_kwargs["instruct"] = instruct
+            mode = f"Voice Design ({instruct})"
+        # Mode 3: Auto Voice
+        else:
+            mode = "Auto Voice"
+        
+        print(f"🎤 OmniVoice [{mode}]: Generating speech...")
+        audio = model.generate(**gen_kwargs)
+        
+        # Save audio
+        sf.write(output_path, audio[0], 24000)
+        
+        if os.path.exists(output_path):
+            size = os.path.getsize(output_path)
+            return {
+                "success": True, 
+                "output": f"✅ OmniVoice [{mode}] -> {output_path} ({size/1024:.1f} KB)", 
+                "file": output_path
+            }
+        return {"success": False, "output": "OmniVoice: no output file"}
+    except Exception as e:
+        return {"success": False, "output": f"OmniVoice error: {str(e)[:500]}"}
+
+
 def _tts_edge(text, output_path, voice, rate, pitch):
     """Microsoft Edge TTS (free, high quality)."""
+    if not output_path.endswith('.mp3'):
+        output_path = output_path.rsplit('.', 1)[0] + '.mp3'
+    
     try:
         import edge_tts
         import asyncio
@@ -389,14 +476,17 @@ def _tts_edge(text, output_path, voice, rate, pitch):
         
         if os.path.exists(output_path):
             size = os.path.getsize(output_path)
-            return {"success": True, "output": f"✅ TTS generated -> {output_path} ({size/1024:.1f} KB)", "file": output_path}
-        return {"success": False, "output": "TTS failed: no output file"}
+            return {"success": True, "output": f"✅ Edge TTS -> {output_path} ({size/1024:.1f} KB)", "file": output_path}
+        return {"success": False, "output": "Edge TTS failed: no output file"}
     except ImportError:
         return {"success": False, "output": "edge-tts not installed. Run: pip install edge-tts"}
 
 
 def _tts_gtts(text, output_path):
     """Google TTS (free, basic)."""
+    if not output_path.endswith('.mp3'):
+        output_path = output_path.rsplit('.', 1)[0] + '.mp3'
+    
     try:
         from gtts import gTTS
         
@@ -405,7 +495,7 @@ def _tts_gtts(text, output_path):
         
         if os.path.exists(output_path):
             size = os.path.getsize(output_path)
-            return {"success": True, "output": f"✅ TTS (gTTS) generated -> {output_path} ({size/1024:.1f} KB)", "file": output_path}
+            return {"success": True, "output": f"✅ gTTS -> {output_path} ({size/1024:.1f} KB)", "file": output_path}
         return {"success": False, "output": "gTTS failed: no output file"}
     except ImportError:
         return {"success": False, "output": "gTTS not installed. Run: pip install gTTS"}
@@ -547,8 +637,9 @@ Extra args: overlay_path, position, scale, watermark_text"""
     },
     "tts_generate": {
         "fn": tts_generate,
-        "description": """Generate speech from text. Args: {text: str, ...}
-Engines: edge (Vietnamese voices), gtts
-Vietnamese voices: vi-VN-HoaiMyNeural (female), vi-VN-NamMinhNeural (male)"""
+        "description": """Generate speech from text. Args: {text: str, engine?: str, ...}
+Engines: omnivoice (voice cloning/design), edge (Vietnamese voices), gtts
+OmniVoice modes: ref_audio (clone), instruct (design), auto
+Vietnamese voices (edge): vi-VN-HoaiMyNeural (female), vi-VN-NamMinhNeural (male)"""
     },
 }
