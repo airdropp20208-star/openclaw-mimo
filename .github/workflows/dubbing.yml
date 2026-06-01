@@ -25,13 +25,13 @@ on:
           - Vietnamese
           - English
       tts_engine:
-        description: 'TTS engine'
+        description: 'TTS engine (edge=no GPU needed, omnivoice=needs GPU)'
         required: false
         type: choice
-        default: 'omnivoice'
+        default: 'edge'
         options:
-          - omnivoice
           - edge
+          - omnivoice
       title:
         description: 'Video title for YouTube'
         required: false
@@ -81,7 +81,8 @@ jobs:
   # ─── Job 2: Dubbing pipeline (GPU available) ──────────────────
   dub:
     needs: test
-    # Use GPU runner if available, fallback to CPU
+    # Use ubuntu-latest for edge TTS (no GPU needed)
+    # For omnivoice with GPU, use: [self-hosted, gpu]
     runs-on: ${{ github.event.inputs.tts_engine == 'omnivoice' && fromJSON('["self-hosted", "gpu"]') || 'ubuntu-latest' }}
     timeout-minutes: 60
     steps:
