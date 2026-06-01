@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Hermes Bot — Autonomous AI agent with OpenManus tools.
+OpenClaw MiMo Bot — AI Agent for Video Editing + Vietnamese TTS.
 
-3 capabilities:
-1. Tool-using — execute commands, browse, search, convert, generate PPT
-2. Autonomous — self-plan goals, break into subtasks, track progress
-3. Learning — extract patterns from successful tasks, build skill library
+Features:
+- Send video → Bot edits/sends back processed video
+- Text messages → Agent processes with tools
+- OmniVoice TTS for Vietnamese voice generation
+- Video editing: trim, concat, overlay, subtitle, watermark, etc.
 
 Usage:
     BOT_TOKEN=xxx API_KEY=xxx python bot.py
@@ -48,7 +49,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-logger = logging.getLogger("hermes-bot")
+logger = logging.getLogger("openclaw-bot")
 
 _shutdown = False
 
@@ -99,10 +100,37 @@ def send_chat_action(chat_id: int, action: str = "typing") -> None:
         pass
 
 
+def send_video(chat_id: int, file_path: str, caption: str = "") -> None:
+    """Send video file to Telegram."""
+    try:
+        mime = mimetypes.guess_type(file_path)[0] or "video/mp4"
+        boundary = f"----OpenClawBot{int(time.time() * 1000)}"
+        fname = os.path.basename(file_path).replace('"', "_")
+        with open(file_path, "rb") as f:
+            fdata = f.read()
+        caption_clean = caption.replace("\r", "").replace("\n", " ")[:1024]
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="chat_id"\r\n\r\n{chat_id}\r\n'
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="caption"\r\n\r\n{caption_clean}\r\n'
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="video"; filename="{fname}"\r\n'
+            f"Content-Type: {mime}\r\n\r\n"
+        ).encode() + fdata + f"\r\n--{boundary}--\r\n".encode()
+        req = urllib.request.Request(f"{_TG_BASE}/sendVideo", data=body)
+        req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            return json.loads(resp.read())
+    except Exception as e:
+        logger.error("Send video failed: %s", e)
+
+
 def send_document(chat_id: int, file_path: str, caption: str = "") -> None:
+    """Send document/file to Telegram."""
     try:
         mime = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
-        boundary = f"----HermesBot{int(time.time() * 1000)}"
+        boundary = f"----OpenClawBot{int(time.time() * 1000)}"
         fname = os.path.basename(file_path).replace('"', "_")
         with open(file_path, "rb") as f:
             fdata = f.read()
@@ -118,10 +146,36 @@ def send_document(chat_id: int, file_path: str, caption: str = "") -> None:
         ).encode() + fdata + f"\r\n--{boundary}--\r\n".encode()
         req = urllib.request.Request(f"{_TG_BASE}/sendDocument", data=body)
         req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=120) as resp:
             return json.loads(resp.read())
     except Exception as e:
         logger.error("Send document failed: %s", e)
+
+
+def send_audio(chat_id: int, file_path: str, caption: str = "") -> None:
+    """Send audio/voice file to Telegram."""
+    try:
+        mime = mimetypes.guess_type(file_path)[0] or "audio/mpeg"
+        boundary = f"----OpenClawBot{int(time.time() * 1000)}"
+        fname = os.path.basename(file_path).replace('"', "_")
+        with open(file_path, "rb") as f:
+            fdata = f.read()
+        caption_clean = caption.replace("\r", "").replace("\n", " ")[:1024]
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="chat_id"\r\n\r\n{chat_id}\r\n'
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="caption"\r\n\r\n{caption_clean}\r\n'
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="audio"; filename="{fname}"\r\n'
+            f"Content-Type: {mime}\r\n\r\n"
+        ).encode() + fdata + f"\r\n--{boundary}--\r\n".encode()
+        req = urllib.request.Request(f"{_TG_BASE}/sendAudio", data=body)
+        req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            return json.loads(resp.read())
+    except Exception as e:
+        logger.error("Send audio failed: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -166,13 +220,12 @@ def download_file(file_id: str, file_name: str) -> str | None:
         if not file_path:
             return None
         url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
-        # Sanitize filename — prevent path traversal
         safe_name = os.path.basename(file_name).replace("..", "_").replace("/", "_")
         if not safe_name:
             safe_name = f"download_{int(time.time())}"
         local = f"/tmp/{safe_name}"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=120) as resp:
             with open(local, "wb") as f:
                 while True:
                     chunk = resp.read(65536)
@@ -186,40 +239,67 @@ def download_file(file_id: str, file_name: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Video processing helpers
+# ---------------------------------------------------------------------------
+
+VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv", ".m4v"}
+AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+
+
+def is_video_file(filename: str) -> bool:
+    ext = os.path.splitext(filename.lower())[1]
+    return ext in VIDEO_EXTENSIONS
+
+
+def is_audio_file(filename: str) -> bool:
+    ext = os.path.splitext(filename.lower())[1]
+    return ext in AUDIO_EXTENSIONS
+
+
+def is_image_file(filename: str) -> bool:
+    ext = os.path.splitext(filename.lower())[1]
+    return ext in IMAGE_EXTENSIONS
+
+
+def get_file_type(filename: str) -> str:
+    if is_video_file(filename):
+        return "video"
+    elif is_audio_file(filename):
+        return "audio"
+    elif is_image_file(filename):
+        return "image"
+    return "document"
+
+
+# ---------------------------------------------------------------------------
 # Help
 # ---------------------------------------------------------------------------
 
-HELP = """🤖 *Hermes Agent v2* — Autonomous AI
+HELP = """🤖 *OpenClaw MiMo* — AI Agent Video Editing + TTS
 
-*3 capabilities:*
-🔧 Tool-using — execute commands, browse, search, convert files
-🧠 Autonomous — self-plan goals, auto-chain multi-step tasks
-📚 Learning — remembers successful skills for reuse
+*Cách dùng:*
+📹 Gửi video + ghi chú cần edit → Bot tự xử lý
+🗣 Gõ "tạo giọng: ..." → Tạo giọng tiếng Việt
+💬 Gõ câu hỏi → Agent trả lời
 
-*Commands:*
+*Video Commands:*
+• Gửi video + "cắt 5 giây đầu"
+• Gửi video + "thêm chữ Xin Chào"
+• Gửi video + "trích xuất âm thanh"
+• Gửi video + "tạo GIF"
+
+*TTS Commands:*
+• "tạo giọng: Xin chào các bạn"
+• "giọng nam: Hello world"
+• "giọng nữ: Chào mừng"
+
+*Other Commands:*
 /start — Help
 /clear — Clear history
-
-*🎯 Goals:*
-/goals — View all goals
-/goal add <description> — Set a new goal (auto-decomposed)
-/goal done <subtask_id> — Mark subtask complete
-/goal delete <goal_id> — Delete a goal
-/goal pause <goal_id> — Pause a goal
-/goal resume <goal_id> — Resume a goal
-/actions — Get next recommended actions
-
-*📚 Learning:*
-/skills — List learned skills
-/skill <id> — View skill detail
-/stats — Learning statistics
-
-*🧠 Memory:*
-/remember <text> — Save to memory
-/recall — View memory
 /health — System info
-
-*Just ask me anything — I plan and execute automatically!*"""
+/goals — View goals
+/skills — Learned skills"""
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +358,7 @@ def main():
     )
 
     logger.info("=" * 50)
-    logger.info("Hermes Agent v2 — model: %s, autonomous: on, learning: on", MODEL)
+    logger.info("OpenClaw MiMo Bot — model: %s", MODEL)
     logger.info("API keys: %d", len(_key_pool))
     logger.info("Allowed chats: %s", allowed or "all")
     logger.info("=" * 50)
@@ -311,7 +391,78 @@ def main():
                     continue
                 text = msg.get("text", "")
 
-                # Handle documents
+                # --- Handle VIDEO messages ---
+                if msg.get("video"):
+                    if allowed and chat_id not in allowed:
+                        continue
+                    video = msg["video"]
+                    fid = video.get("file_id", "")
+                    fname = video.get("file_name", f"video_{int(time.time())}.mp4")
+                    fsize = video.get("file_size", 0)
+                    
+                    if fsize > 50 * 1024 * 1024:
+                        send(chat_id, "❌ Video quá lớn (tối đa 50MB)")
+                        continue
+                    
+                    send_chat_action(chat_id, "upload_video")
+                    send(chat_id, "📥 Đang tải video...")
+                    local = download_file(fid, fname)
+                    
+                    if not local:
+                        send(chat_id, "❌ Không tải được video")
+                        continue
+                    
+                    # Get instruction from caption or ask
+                    instruction = msg.get("caption", "").strip()
+                    if not instruction:
+                        send(chat_id, 
+                            "✅ Đã nhận video!\n\n"
+                            "Ghi chú cần edit:\n"
+                            "• `cắt 5 giây đầu`\n"
+                            "• `thêm chữ Xin Chào`\n"
+                            "• `trích xuất âm thanh`\n"
+                            "• `tạo GIF`\n"
+                            "• `đổi tốc độ 2x`\n"
+                            "• `resize 720p`"
+                        )
+                        continue
+                    
+                    # Process video with agent
+                    send_chat_action(chat_id, "typing")
+                    send(chat_id, f"🎬 Đang xử lý video...\n📝 Yêu cầu: {instruction}")
+                    
+                    try:
+                        # Build prompt for agent
+                        video_prompt = f"File video đã tải về: {local}\n\nYêu cầu xử lý: {instruction}\n\nHãy sử dụng các tool video_edit, video_info, video_composite để xử lý video. Sau khi xong, thông báo đường dẫn file kết quả."
+                        
+                        response = agent.process(chat_id, video_prompt)
+                        
+                        if not response or not response.strip():
+                            response = "⚠️ Xử lý video thất bại"
+                        
+                        # Check if there's a result file to send
+                        # Look for file paths in response
+                        import re
+                        file_matches = re.findall(r'(/[^\s\'"]+\.(mp4|avi|mov|mkv|gif|mp3|wav|png|jpg))', response)
+                        
+                        if file_matches:
+                            for file_path, ext in file_matches:
+                                if os.path.exists(file_path):
+                                    if ext in VIDEO_EXTENSIONS or ext == 'gif':
+                                        send_video(chat_id, file_path, caption="🎬 Video đã xử lý")
+                                    elif ext in AUDIO_EXTENSIONS:
+                                        send_audio(chat_id, file_path, caption="🔊 Audio đã trích xuất")
+                                    elif ext in IMAGE_EXTENSIONS:
+                                        send(chat_id, f"📎 File: {file_path}")
+                        
+                        send(chat_id, response)
+                    except Exception as e:
+                        logger.exception("Video processing error")
+                        send(chat_id, f"❌ Lỗi xử lý video: {str(e)[:200]}")
+                    
+                    continue
+
+                # --- Handle DOCUMENT messages ---
                 if msg.get("document"):
                     if allowed and chat_id not in allowed:
                         continue
@@ -325,9 +476,25 @@ def main():
                     send(chat_id, "Downloading...")
                     local = download_file(fid, fname)
                     if local:
-                        send(chat_id, f"📄 Saved: {local}")
+                        file_type = get_file_type(fname)
+                        send(chat_id, f"📄 Saved: {local}\nType: {file_type}")
                     else:
                         send(chat_id, "Failed to download file")
+                    continue
+
+                # --- Handle VOICE messages ---
+                if msg.get("voice"):
+                    if allowed and chat_id not in allowed:
+                        continue
+                    voice = msg["voice"]
+                    fid = voice.get("file_id", "")
+                    fsize = voice.get("file_size", 0)
+                    if fsize > 20 * 1024 * 1024:
+                        send(chat_id, "Voice quá lớn (tối đa 20MB)")
+                        continue
+                    local = download_file(fid, f"voice_{int(time.time())}.ogg")
+                    if local:
+                        send(chat_id, f"🎤 Voice saved: {local}")
                     continue
 
                 if not text or msg.get("from", {}).get("is_bot"):
@@ -359,7 +526,7 @@ def main():
                     planner = agent._get_planner(chat_id)
                     active_goals = len(planner.get_active_goals())
                     send(chat_id, (
-                        f"🟢 *Hermes Agent v2*\n"
+                        f"🟢 *OpenClaw MiMo*\n"
                         f"Model: `{MODEL}`\n"
                         f"Keys: `{len(_key_pool)}`\n"
                         f"API: `{API_BASE}`\n"
@@ -428,7 +595,6 @@ def main():
                     continue
 
                 if lower == "/learn":
-                    # Force learn from recent history
                     send(chat_id, "🧠 Analyzing recent tasks...")
                     stats = agent.get_learning_stats(chat_id)
                     send(chat_id, stats)
@@ -464,6 +630,58 @@ def main():
                     send(chat_id, "🧠 Memory:\n\n" + "\n".join(lines))
                     continue
 
+                # --- TTS shortcut ---
+                if lower.startswith("tạo giọng:") or lower.startswith("tạo giọng :"):
+                    tts_text = text.split(":", 1)[1].strip() if ":" in text else ""
+                    if not tts_text:
+                        send(chat_id, "Usage: tạo giọng: <văn bản>")
+                        continue
+                    send_chat_action(chat_id, "typing")
+                    try:
+                        from tools_video import tts_generate
+                        result = tts_generate(tts_text, engine="edge", voice="vi-VN-HoaiMyNeural")
+                        if result["success"] and result.get("file"):
+                            send_audio(chat_id, result["file"], caption="🗣 Giọng tiếng Việt")
+                        else:
+                            send(chat_id, f"❌ TTS failed: {result['output']}")
+                    except Exception as e:
+                        send(chat_id, f"❌ TTS error: {str(e)[:200]}")
+                    continue
+
+                if lower.startswith("giọng nam:") or lower.startswith("giọng nam :"):
+                    tts_text = text.split(":", 1)[1].strip() if ":" in text else ""
+                    if not tts_text:
+                        send(chat_id, "Usage: giọng nam: <văn bản>")
+                        continue
+                    send_chat_action(chat_id, "typing")
+                    try:
+                        from tools_video import tts_generate
+                        result = tts_generate(tts_text, engine="edge", voice="vi-VN-NamMinhNeural")
+                        if result["success"] and result.get("file"):
+                            send_audio(chat_id, result["file"], caption="🗣 Giọng nam")
+                        else:
+                            send(chat_id, f"❌ TTS failed: {result['output']}")
+                    except Exception as e:
+                        send(chat_id, f"❌ TTS error: {str(e)[:200]}")
+                    continue
+
+                if lower.startswith("giọng nữ:") or lower.startswith("giọng nữ :"):
+                    tts_text = text.split(":", 1)[1].strip() if ":" in text else ""
+                    if not tts_text:
+                        send(chat_id, "Usage: giọng nữ: <văn bản>")
+                        continue
+                    send_chat_action(chat_id, "typing")
+                    try:
+                        from tools_video import tts_generate
+                        result = tts_generate(tts_text, engine="edge", voice="vi-VN-HoaiMyNeural")
+                        if result["success"] and result.get("file"):
+                            send_audio(chat_id, result["file"], caption="🗣 Giọng nữ")
+                        else:
+                            send(chat_id, f"❌ TTS failed: {result['output']}")
+                    except Exception as e:
+                        send(chat_id, f"❌ TTS error: {str(e)[:200]}")
+                    continue
+
                 # --- Agent processing ---
                 send_chat_action(chat_id)
                 try:
@@ -471,13 +689,11 @@ def main():
                     if removed:
                         logger.info("Cleaned up %d old chat histories", removed)
 
-                    # Show "thinking" status periodically for long tasks
                     start_time = time.time()
                     response = agent.process(chat_id, text)
                     
-                    # Ensure response is not empty
                     if not response or not response.strip():
-                        response = "⚠️ Agent returned an empty response. This might be due to a model error or filtering."
+                        response = "⚠️ Agent returned an empty response."
                     
                     send(chat_id, response)
                 except Exception as e:
@@ -486,7 +702,7 @@ def main():
                     if "401" in error_msg:
                         error_msg = "⚠️ API Key error. Please check your configuration."
                     elif "timeout" in error_msg.lower():
-                        error_msg = "⚠️ Request timed out. The task might be too complex."
+                        error_msg = "⚠️ Request timed out."
                     send(chat_id, error_msg)
 
         except KeyboardInterrupt:
@@ -497,8 +713,6 @@ def main():
             backoff = min(poll_errors * 2, 60)
             logger.error("Poll error (%d): %s — retrying in %ds", poll_errors, e, backoff)
             time.sleep(backoff)
-
-    logger.info("Bot stopped.")
 
 
 if __name__ == "__main__":
