@@ -1,296 +1,105 @@
-# 📋 TỔNG QUAN DỰ ÁN: AI Agent TỰ ĐỘNG EDIT VIDEO + TẠO GIỌNG TIẾNG VIỆT
+# 🎬 OpenClaw Dubbing Studio
 
-## 1. Mục tiêu của dự án
+**Professional Video Dubbing Service** — Not a chatbot. A dedicated dubbing studio.
 
-Xây dựng một AI Agent tự động, có khả năng:
+## 🎯 What It Does
 
-- Nhận yêu cầu bằng ngôn ngữ tự nhiên (qua terminal hoặc web/Telegram)
-- Tự động viết code (Python + FFmpeg/MoviePy) để edit video (cắt ghép, vietsub, che phụ đề)
-- Tạo giọng đọc tiếng Việt từ văn bản bằng OmniVoice
-- Chạy 24/7 trên VPS chỉ có terminal (không màn hình desktop)
+Send a video → Get a dubbed version in Vietnamese. That's it.
 
-**Yêu cầu đặc biệt:**
-
-- Dùng **MiMo API** (của Xiaomi) làm "bộ não" (LLM suy luận, ra lệnh)
-- Dùng **OmniVoice** (của k2-fsa) làm "cổ họng" (TTS tiếng Việt)
-- Tất cả cài đặt và chạy qua terminal, không cần GUI
-
----
-
-## 2. Kiến trúc tổng thể
-
-```
-Người dùng (lệnh text)
-        │
-        ▼
-┌─────────────────────────────────────────────┐
-│  OpenClaw Gateway (framework chính)         │
-│  - Nhận lệnh tự nhiên                        │
-│  - Quản lý tools                             │
-│  - Gọi MiMo API để suy luận                  │
-└─────────────────────────────────────────────┘
-        │
-        ├──────────────┬──────────────┐
-        ▼              ▼              ▼
-┌────────────┐  ┌────────────┐  ┌────────────┐
-│ Tool:      │  │ Tool:      │  │ Tool:      │
-│ Edit video │  │ OmniVoice  │  │ File I/O   │
-│ (Python)   │  │ TTS API    │  │ (upload/   │
-└────────────┘  └────────────┘  │ download)  │
-        │              │         └────────────┘
-        ▼              ▼
-┌────────────┐  ┌────────────┐
-│ FFmpeg /   │  │ OmniVoice  │
-│ MoviePy    │  │ (API       │
-│ (render)   │  │  server)   │
-└────────────┘  └────────────┘
-```
-
----
-
-## 3. Công nghệ sử dụng
-
-| Thành phần | Công nghệ | Ghi chú |
-|---|---|---|
-| Framework chính | OpenClaw (TypeScript) | Hỗ trợ MiMo sẵn, dễ thêm tool |
-| Bộ não (LLM) | MiMo API (Xiaomi) | Model: mimo-v2-pro hoặc mimo-v2-omni |
-| Giọng nói (TTS) | OmniVoice (k2-fsa) | Hỗ trợ tiếng Việt, clone giọng, 600+ ngôn ngữ |
-| Edit video | FFmpeg + MoviePy (Python) | MiMo tự viết script theo yêu cầu |
-| Môi trường chạy | VPS Linux (Ubuntu 22.04) | Chỉ terminal, khuyến nghị có GPU (NVIDIA) |
-| CI/CD / Test | GitHub Actions | Test script trước khi deploy lên VPS |
-
----
-
-## 4. Luồng hoạt động chi tiết
-
-### Bước 1: Người dùng ra lệnh
-
-Ví dụ: *"Hãy lấy file video1.mp4, cắt 10 giây đầu, thêm phụ đề tiếng Việt, và đọc đoạn text này thành giọng nữ"*
-
-### Bước 2: OpenClaw nhận lệnh, gửi cho MiMo
-
-- MiMo phân tích ý đồ
-- MiMo quyết định cần gọi tool nào (EditVideo / OmniVoice)
-
-### Bước 3: MiMo viết code edit video
-
-```python
-# MiMo tự sinh ra code tương tự:
-from moviepy import VideoFileClip
-
-clip = VideoFileClip("video1.mp4").subclipped(0, 10)
-# ... thêm phụ đề
-clip.write_videofile("output.mp4")
-```
-
-### Bước 4: Gọi OmniVoice để tạo giọng
-
-```python
-# Nếu cần, gọi OmniVoice API server
-POST http://localhost:8080/synthesize
-{
-  "text": "Xin chào các bạn",
-  "instruct": "female, medium pitch"
-}
-# Trả về file .wav
-```
-
-### Bước 5: Trả kết quả
-
-- Gửi link tải video đã edit
-- (Tùy chọn) Gửi file âm thanh
-
----
-
-## 5. Các thành phần cần code
-
-### 5.1. Cài đặt OpenClaw + tích hợp MiMo
-
-**Việc cần làm:**
-
-- Cài OpenClaw trên VPS (Ubuntu)
-- Cấu hình để dùng MiMo API key
-- Bật Gateway chạy nền 24/7
+## 🚀 Quick Start
 
 ```bash
-# Cài OpenClaw
-curl -fsSL https://openclaw.ai/install.sh | bash
+# Set environment
+export BOT_TOKEN="your_telegram_bot_token"
+export API_KEY="your_mimo_api_key"
+export ALLOWED_CHATS="your_telegram_id"
 
-# Thêm MiMo API key
-openclaw models auth add --key $MIMO_API_KEY
-
-# Chạy gateway
-openclaw gateway install
-openclaw gateway start
+# Run
+python3 dubbing_bot.py
 ```
 
-### 5.2. Tool edit video (MiMo tự viết script)
+## 📹 How to Use
 
-**Yêu cầu tool này:**
+### Option 1: Send Video
+1. Send a video file to the bot
+2. Add caption: `dịch sang tiếng việt`
+3. Wait 2-3 minutes
+4. Receive dubbed video
 
-- Nhận đầu vào: đường dẫn video + mô tả chỉnh sửa (text)
-- MiMo sẽ tự sinh code Python xử lý video (dùng FFmpeg hoặc MoviePy)
-- Code được chạy và xuất ra video mới
-
-**Cách implement:**
-Tạo một tool trong OpenClaw có tên `edit_video`:
-
-```python
-def edit_video(video_path: str, instruction: str) -> str:
-    """
-    Args:
-        video_path: Đường dẫn đến file video
-        instruction: Yêu cầu chỉnh sửa bằng tiếng Việt
-                     (ví dụ: "cắt 10 giây đầu, thêm chữ màu đỏ")
-    Returns:
-        Đường dẫn đến video đã chỉnh sửa
-    """
-    # Gọi MiMo API để sinh code xử lý
-    code = call_mimo(f"Viết Python code dùng moviepy để {instruction}")
-
-    # Chạy code trong sandbox
-    result = exec(code)
-    return result.output_path
+### Option 2: Send Link
+```
+https://youtu.be/xxxxx dịch sang tiếng việt
+https://www.bilibili.com/video/xxxxx dịch trung → vi
 ```
 
-### 5.3. OmniVoice API server (dạng REST)
+## 🌐 Supported Languages
 
-**Mục đích:** Chạy OmniVoice như một service riêng để OpenClaw gọi qua HTTP.
+| Source | Target | Code |
+|--------|--------|------|
+| 🇨🇳 Chinese | 🇻🇳 Vietnamese | zh→vi |
+| 🇬🇧 English | 🇻🇳 Vietnamese | en→vi |
+| 🇯🇵 Japanese | 🇻🇳 Vietnamese | ja→vi |
+| 🇰🇷 Korean | 🇻🇳 Vietnamese | ko→vi |
 
-**File cần viết:** `omnivoice_server.py`
+## ⚡ Performance
 
-```python
-from fastapi import FastAPI
-from omnivoice import OmniVoice
-import soundfile as sf
+| Video Length | Processing Time |
+|--------------|-----------------|
+| 5 minutes | 2-3 minutes |
+| 30 minutes | 10-15 minutes |
+| 60 minutes | 20-30 minutes |
 
-app = FastAPI()
-model = OmniVoice.from_pretrained("k2-fsa/OmniVoice")
+## 🛠 Tech Stack
 
-@app.post("/synthesize")
-async def synthesize(data: dict):
-    text = data["text"]
-    instruct = data.get("instruct", "")  # ví dụ: "female, vietnamese accent"
+- **Transcription**: Whisper large-v3
+- **Translation**: MiMo-V2.5 (Xiaomi)
+- **TTS**: Edge TTS / OmniVoice
+- **Download**: yt-dlp (1000+ platforms)
+- **Bot**: Python Telegram Bot API
 
-    audio = model.generate(text=text, instruct=instruct)
+## 📝 Commands
 
-    # Lưu tạm file .wav
-    sf.write("output.wav", audio[0], 24000)
-    return {"audio_url": "http://localhost/output.wav"}
-```
+| Command | Description |
+|---------|-------------|
+| `/start` | Help |
+| `/status` | Queue status |
 
-**Chạy server:**
+## 🔧 Configuration
 
 ```bash
-python omnivoice_server.py --port 8080
+# Required
+BOT_TOKEN=xxx        # Telegram bot token
+API_KEY=xxx          # MiMo API key
+
+# Optional
+API_BASE=https://api.xiaomimimo.com/v1
+MODEL=mimo-v2.5
+ALLOWED_CHATS=123,456  # Comma-separated Telegram user IDs
 ```
 
-### 5.4. Tool gọi OmniVoice trong OpenClaw
+## 🎬 Professional Features
 
-```python
-def text_to_speech(text: str, voice_style: str = "") -> str:
-    """
-    Args:
-        text: Văn bản tiếng Việt cần đọc
-        voice_style: "male", "female", "low pitch", "high pitch",...
-    Returns:
-        Đường dẫn đến file .wav
-    """
-    import requests
-    response = requests.post(
-        "http://localhost:8080/synthesize",
-        json={"text": text, "instruct": voice_style}
-    )
-    return response.json()["audio_url"]
+- **Batch Processing**: Queue multiple videos
+- **Subtitle Generation**: SRT, ASS, VTT formats
+- **Voice Cloning**: Clone voices from reference audio
+- **Audio Normalization**: Professional audio post-processing
+- **Quality Presets**: Draft, Standard, Premium
+
+## 📦 Installation
+
+```bash
+git clone https://github.com/airdropp20208-star/openclaw-mimo.git
+cd openclaw-mimo
+pip install -r requirements.txt
 ```
 
-### 5.5. GitHub Actions workflow (test & deploy)
+## 🚨 Important Notes
 
-**File:** `.github/workflows/deploy.yml`
+1. **GPU Recommended**: For faster transcription (Whisper)
+2. **API Key Required**: MiMo API key for translation
+3. **Storage**: Videos are processed in /tmp, auto-cleaned
+4. **Size Limit**: 100MB per video
 
-```yaml
-name: Deploy OpenClaw + OmniVoice to VPS
+## 📄 License
 
-on:
-  push:
-    branches: [main]
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Test cài OpenClaw
-        run: curl -fsSL https://openclaw.ai/install.sh | bash
-      - name: Test OmniVoice
-        run: |
-          pip install omnivoice
-          python -c "from omnivoice import OmniVoice; print('OK')"
-
-  deploy:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - name: SSH to VPS and install
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.VPS_IP }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            # Cài OpenClaw
-            curl -fsSL https://openclaw.ai/install.sh | bash
-            openclaw models auth add --key ${{ secrets.MIMO_API_KEY }}
-
-            # Cài OmniVoice server
-            git clone https://github.com/k2-fsa/OmniVoice.git
-            cd OmniVoice
-            pip install -e .
-            nohup python omnivoice_server.py &
-
-            # Chạy OpenClaw
-            openclaw gateway install
-            openclaw gateway start
-```
-
----
-
-## 6. Cấu hình VPS tối thiểu
-
-| Thành phần | Yêu cầu |
-|---|---|
-| Hệ điều hành | Ubuntu 22.04 LTS (Linux) |
-| CPU | 2 vCPU trở lên |
-| RAM | 4 GB (8 GB khuyến nghị nếu dùng OmniVoice) |
-| GPU | Không bắt buộc, nhưng có NVIDIA GPU sẽ giúp OmniVoice nhanh hơn |
-| Storage | 20 GB SSD (có thể lưu video tạm) |
-| Mạng | Cần port mở: 18789 (OpenClaw web UI), 8080 (OmniVoice API) |
-
----
-
-## 7. Các bước triển khai (cho lập trình viên)
-
-1. Cài đặt OpenClaw trên VPS (dùng script 1 dòng)
-2. Tích hợp MiMo API key vào OpenClaw
-3. Code OmniVoice API server (FastAPI + omnivoice)
-4. Tạo tool OpenClaw để gọi OmniVoice
-5. Tạo tool edit video (dùng MiMo tự sinh code MoviePy)
-6. Viết GitHub Actions workflow tự động test và deploy
-7. Chạy thử với lệnh: *"edit video1.mp4: cắt 5 giây đầu, thêm chữ 'Xin chào', đọc bằng giọng nữ"*
-
----
-
-## 8. Tham khảo tài liệu
-
-- OpenClaw + MiMo: https://docs.openclaw.ai/model-providers/openrouter
-- OmniVoice GitHub: https://github.com/k2-fsa/OmniVoice
-- MiMo API docs: (bạn đã có key)
-- MoviePy docs: https://zulko.github.io/moviepy/
-
----
-
-## 9. Notes cho dev
-
-- Ưu tiên dùng OpenClaw vì nó hỗ trợ MiMo sẵn, không phải code nhiều từ đầu
-- OmniVoice chạy riêng thành API server để OpenClaw gọi qua HTTP, dễ debug và tái sử dụng
-- Test trên GitHub Actions trước để tránh lỗi cài đặt trên VPS
-- Dùng Ubuntu 22.04, không dùng Windows vì OmniVoice chạy ổn định hơn trên Linux
+MIT

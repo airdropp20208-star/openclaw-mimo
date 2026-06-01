@@ -1,28 +1,14 @@
 #!/bin/bash
-# OpenClaw MiMo - Startup Script
+# OpenClaw Dubbing Studio — Start Script
 
-echo "🎬 OpenClaw MiMo - Starting..."
+echo "🎬 OpenClaw Dubbing Studio"
+echo "=========================="
 
-# Check .env
-if [ ! -f .env ]; then
-    echo "❌ .env file not found!"
-    echo "Create .env with:"
-    echo "  BOT_TOKEN=your_telegram_bot_token"
-    echo "  API_KEY=your_mimo_api_key"
-    exit 1
-fi
-
-# Load env
-source .env
-
-# Check required vars
-if [ -z "$BOT_TOKEN" ]; then
-    echo "❌ BOT_TOKEN not set in .env"
-    exit 1
-fi
-
-if [ -z "$API_KEY" ]; then
-    echo "❌ API_KEY not set in .env"
+# Check env
+if [ -z "$BOT_TOKEN" ] || [ -z "$API_KEY" ]; then
+    echo "❌ Set environment variables:"
+    echo "   export BOT_TOKEN='your...port export API_KEY='your...'
+    echo "   export ALLOWED_CHATS='your_telegram_id'"
     exit 1
 fi
 
@@ -30,11 +16,10 @@ echo "✅ Config loaded"
 echo "   BOT_TOKEN: ${BOT_TOKEN:0:10}..."
 echo "   API_KEY: ${API_KEY:0:10}..."
 
-# Install deps if needed
-echo "📦 Checking dependencies..."
-pip install -q yt-dlp faster-whisper edge-tts 2>/dev/null
+# Install deps
+echo "📦 Installing dependencies..."
+pip install -q yt-dlp edge-tts faster-whisper pydub numpy pillow requests 2>/dev/null
 
 # Start bot
-echo "🚀 Starting bot..."
-export BOT_TOKEN API_KEY
-python3 bot.py
+echo "🚀 Starting dubbing bot..."
+python3 dubbing_bot.py
