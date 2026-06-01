@@ -253,28 +253,36 @@ def _tts_omnivoice(text, output_path, voice_preset="", ref_audio="", ref_text=""
         return
     
     try:
-        # Import client from server directory
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "omnivoice-server"))
-        from client import OmniVoiceClient
+        import requests as req
+        import base64, tempfile
         
-        client = OmniVoiceClient(OMNIVOICE_API_URL, api_key=OMNIVOICE_API_KEY)
+        url = OMNIVOICE_API_URL.rstrip("/") + "/tts"
+        headers = {}
+        if OMNIVOICE_API_KEY:
+            headers["Authorization"] = f"Bearer {OMNIVOICE_API_KEY}"
         
-        kwargs = {
+        payload = {
+            "text": text,
             "language": language,
             "speed": 1.0,
             "format": "wav",
         }
         
         if voice_preset:
-            kwargs["voice_preset"] = voice_preset
+            payload["voice_preset"] = voice_preset
         elif ref_audio and os.path.exists(ref_audio):
-            kwargs["ref_audio"] = ref_audio
+            with open(ref_audio, "rb") as f:
+                payload["ref_audio"] = base64.b64encode(f.read()).decode()
             if ref_text:
-                kwargs["ref_text"] = ref_text
+                payload["ref_text"] = ref_text
         else:
-            kwargs["instruct"] = "female, vietnamese accent, natural"
+            payload["instruct"] = "female, vietnamese accent, natural"
         
-        client.generate_and_save(text, output_path, **kwargs)
+        resp = req.post(url, json=payload, headers=headers, timeout=300)
+        resp.raise_for_status()
+        
+        with open(output_path, "wb") as f:
+            f.write(resp.content)
         
     except Exception as e:
         log(f"    OmniVoice API error: {e}")
