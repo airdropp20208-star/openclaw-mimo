@@ -1,4 +1,5 @@
-name: Deploy Hermes Agent
+name: Deploy OpenClaw MiMo
+
 on:
   workflow_dispatch:
     inputs:
@@ -20,34 +21,73 @@ on:
         required: false
         type: string
         default: 'mimo-v2.5'
+
 permissions:
   contents: write
+
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-
+      
       - uses: actions/setup-python@v4
         with:
           python-version: '3.12'
-
+      
       - name: Install system deps
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg imagemagick poppler-utils
-
+          sudo apt-get install -y -qq ffmpeg
+      
       - name: Install Python deps
         run: |
-          pip install -q -r requirements.txt
-          playwright install chromium --with-deps 2>/dev/null || true
+          pip install -q yt-dlp edge-tts faster-whisper pydub numpy pillow requests
+      
+      - name: Test imports
+        run: |
+          python -c "from tools_video import video_edit, tts_generate, video_dub; print('tools_video OK')"
+          python -c "from studio import DubStudio; print('studio OK')"
+          python -c "import yt_dlp; print('yt-dlp OK')"
+          python -c "import edge_tts; print('edge-tts OK')"
+      
+      - name: Test TTS
+        run: |
+          python -c "
+          import asyncio, edge_tts
+          async def test():
+              comm = edge_tts.Communicate('Test', 'vi-VN-HoaiMyNeural')
+              await comm.save('/tmp/test.mp3')
+              print('TTS test passed')
+          asyncio.run(test())
+          "
 
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+      
+      - name: Install system deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+      
+      - name: Install Python deps
+        run: |
+          pip install -q yt-dlp edge-tts faster-whisper pydub numpy pillow requests
+      
       - name: Kill old processes
         run: |
           pkill -f "python bot.py" 2>/dev/null || true
           sleep 1
-
+      
       - name: Start Bot
         env:
           API_KEY: ${{ github.event.inputs.api_key }}
@@ -57,37 +97,21 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           ALLOWED_CHATS: ${{ secrets.ALLOWED_CHATS }}
         run: |
-          nohup python bot.py > bot.log 2>&1 &
-          echo $! > bot.pid
+          python bot.py &
+          BOT_PID=$!
+          echo $BOT_PID > bot.pid
           sleep 5
-          if kill -0 $(cat bot.pid) 2>/dev/null; then
-            echo "✅ Bot started (PID: $(cat bot.pid))"
+          if kill -0 $BOT_PID 2>/dev/null; then
+            echo "Bot started (PID: $BOT_PID)"
           else
-            echo "❌ Bot failed to start:"
-            tail -30 bot.log
+            echo "Bot failed to start"
+            tail -30 bot.log 2>/dev/null
             exit 1
           fi
-
+      
       - name: Verify
         run: |
           echo "=== Process ==="
           kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null && echo "bot: OK" || echo "bot: FAIL"
-          echo "=== Imports ==="
-          python -c "from agent import HermesAgent; print('agent: OK')"
-          python -c "from tools import TOOLS; print(f'tools: {len(TOOLS)} loaded')"
           echo "=== Log ==="
-          tail -10 bot.log 2>/dev/null || echo "(empty)"
-
-      - name: Keep Alive
-        run: |
-          while true; do
-            if ! kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null; then
-              echo "[$(date)] Bot down, restarting..."
-              pkill -f "python bot.py" 2>/dev/null || true
-              sleep 2
-              nohup python bot.py > bot.log 2>&1 &
-              echo $! > bot.pid
-              echo "[$(date)] Restarted (PID: $(cat bot.pid))"
-            fi
-            sleep 300
-          done
+          tail -20 bot.log 2>/dev/null || echo "(empty)"

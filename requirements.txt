@@ -1,32 +1,19 @@
 # OpenClaw MiMo - Professional Dubbing Studio
+# Light deps for CI/CD
+
 # Core
-markitdown[all]>=0.1.0
-python-pptx>=0.6.21
-browser-use>=0.1.0
-playwright>=1.40.0
+requests>=2.28.0
 
 # Video Editing
-moviepy>=2.0.0
 pydub>=0.25.1
 numpy>=1.24.0
 pillow>=10.0.0
 
-# TTS (Vietnamese)
-# OmniVoice - Primary TTS (voice cloning + design)
-omnivoice>=0.1.5
-torch>=2.0.0
-torchaudio>=2.0.0
-soundfile>=0.12.0
-# Edge TTS - Fallback (free, high quality)
+# TTS
 edge-tts>=6.1.0
-# gTTS - Basic fallback
-gTTS>=2.3.0
 
 # Transcription
 faster-whisper>=1.0.0
 
 # Download
 yt-dlp>=2024.0.0
-
-# API
-requests>=2.28.0
