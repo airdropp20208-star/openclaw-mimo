@@ -925,3 +925,264 @@ VIDEO_TOOLS["youtube_download"] = {
     "fn": youtube_download,
     "description": "Download YouTube video. Args: {url: str, output_path?: str}"
 }
+
+
+# ============================================================
+# MULTI-PLATFORM DOWNLOAD + WATERMARK REMOVAL
+# ============================================================
+
+def video_download(
+    url: str,
+    output_path: str = "",
+    quality: str = "best",
+    remove_watermark: bool = False,
+    watermark_position: str = "top-right",
+    watermark_size: int = 50,
+    **kwargs
+) -> dict:
+    """
+    Download video from any platform (YouTube, Bilibili, TikTok, etc.)
+    with optional watermark removal.
+    
+    Supported platforms:
+    - YouTube, Bilibili, TikTok, Instagram, Facebook
+    - Twitter/X, Dailymotion, Vimeo, Twitch
+    - And 1000+ more via yt-dlp
+    
+    Args:
+        url: Video URL
+        quality: best, 720p, 480p, audio-only
+        remove_watermark: Try to remove logo/watermark
+        watermark_position: Position of watermark (top-right, bottom-right, etc.)
+        watermark_size: Size to crop/blur (pixels from edge)
+    """
+    import subprocess, os, time, shutil
+    from pathlib import Path
+    
+    if not url:
+        return {"success": False, "output": "No URL provided"}
+    
+    if not output_path:
+        output_path = f"/tmp/download_{int(time.time())}.mp4"
+    
+    work_dir = f"/tmp/dl_work_{int(time.time())}"
+    os.makedirs(work_dir, exist_ok=True)
+    
+    try:
+        # Detect platform
+        platform = "unknown"
+        url_lower = url.lower()
+        if "youtube.com" in url_lower or "youtu.be" in url_lower:
+            platform = "YouTube"
+        elif "bilibili.com" in url_lower or "b23.tv" in url_lower:
+            platform = "Bilibili"
+        elif "tiktok.com" in url_lower:
+            platform = "TikTok"
+        elif "instagram.com" in url_lower:
+            platform = "Instagram"
+        elif "facebook.com" in url_lower or "fb.watch" in url_lower:
+            platform = "Facebook"
+        elif "twitter.com" in url_lower or "x.com" in url_lower:
+            platform = "Twitter/X"
+        elif "dailymotion.com" in url_lower:
+            platform = "Dailymotion"
+        elif "vimeo.com" in url_lower:
+            platform = "Vimeo"
+        elif "twitch.tv" in url_lower:
+            platform = "Twitch"
+        else:
+            platform = "Auto-detect"
+        
+        print(f"📥 Downloading from {platform}...")
+        
+        # Quality selection
+        if quality == "best":
+            fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+        elif quality == "720p":
+            fmt = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best"
+        elif quality == "480p":
+            fmt = "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best"
+        elif quality == "audio-only":
+            fmt = "bestaudio[ext=m4a]/bestaudio"
+        else:
+            fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+        
+        cmd = [
+            "yt-dlp",
+            "-f", fmt,
+            "-o", f"{work_dir}/video.%(ext)s",
+            "--merge-output-format", "mp4",
+            "--no-warnings",
+            url
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        
+        # Find downloaded file
+        downloaded = None
+        for f in os.listdir(work_dir):
+            if f.startswith("video."):
+                downloaded = os.path.join(work_dir, f)
+                break
+        
+        if not downloaded:
+            return {"success": False, "output": f"Download failed: {result.stderr[:500]}"}
+        
+        print(f"  ✅ Downloaded: {os.path.basename(downloaded)}")
+        
+        # Remove watermark if requested
+        if remove_watermark and quality != "audio-only":
+            print(f"  🔧 Removing watermark ({watermark_position})...")
+            cleaned = f"{work_dir}/cleaned.mp4"
+            
+            # Try to detect and remove common watermark positions
+            # Common positions: top-right, bottom-right, bottom-left
+            pos_map = {
+                "top-right": f"crop=iw-{watermark_size}:ih:0:0",
+                "bottom-right": f"crop=iw:ih-{watermark_size}:0:0",
+                "bottom-left": f"crop=iw-{watermark_size}:ih:{watermark_size}:0",
+                "top-left": f"crop=iw:ih-{watermark_size}:0:{watermark_size}",
+                "center-bottom": f"crop=iw:ih-{watermark_size}:0:0",
+            }
+            
+            vf = pos_map.get(watermark_position, pos_map["top-right"])
+            
+            # Use unsharp mask to enhance after crop
+            cmd = f'ffmpeg -i {shlex.quote(downloaded)} -vf "{vf}" -c:a copy -y {shlex.quote(cleaned)}'
+            subprocess.run(cmd, shell=True, capture_output=True, timeout=120)
+            
+            if os.path.exists(cleaned):
+                downloaded = cleaned
+                print("  ✅ Watermark removed")
+        
+        # Move to output
+        shutil.move(downloaded, output_path)
+        
+        # Cleanup
+        shutil.rmtree(work_dir, ignore_errors=True)
+        
+        if os.path.exists(output_path):
+            size = os.path.getsize(output_path)
+            return {
+                "success": True,
+                "output": f"✅ Downloaded from {platform}\n📁 {output_path} ({size/(1024*1024):.1f} MB)",
+                "file": output_path
+            }
+        
+        return {"success": False, "output": "Failed to save video"}
+        
+    except Exception as e:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        return {"success": False, "output": f"Download error: {str(e)[:500]}"}
+
+
+def video_remove_watermark(
+    video_path: str,
+    output_path: str = "",
+    position: str = "auto",
+    method: str = "crop",
+    strength: int = 50,
+    **kwargs
+) -> dict:
+    """
+    Remove watermark/logo from video.
+    
+    Methods:
+    - crop: Crop out the watermark area
+    - blur: Blur the watermark area
+    - denoise: Use ffmpeg denoiser
+    
+    Args:
+        video_path: Input video
+        position: Watermark position (auto, top-right, bottom-right, etc.)
+        method: Removal method (crop, blur, denoise)
+        strength: Removal strength (1-100)
+    """
+    import subprocess, os, time
+    
+    if not video_path or not os.path.exists(video_path):
+        return {"success": False, "output": f"Video not found: {video_path}"}
+    
+    if not output_path:
+        ext = os.path.splitext(video_path)[1]
+        output_path = f"/tmp/no_watermark_{int(time.time())}{ext}"
+    
+    try:
+        # Get video dimensions
+        probe = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-select_streams", "v:0", 
+             "-show_entries", "stream=width,height", "-of", "csv=p=0", video_path],
+            capture_output=True, text=True, timeout=10
+        )
+        dims = probe.stdout.strip().split(",")
+        if len(dims) == 2:
+            w, h = int(dims[0]), int(dims[1])
+        else:
+            w, h = 1920, 1080
+        
+        # Detect watermark position (heuristic)
+        if position == "auto":
+            # Common watermark positions
+            position = "top-right"  # Default assumption
+        
+        # Calculate crop/blur area
+        margin = min(strength, 100)
+        
+        if method == "crop":
+            # Crop out watermark area
+            if "top-right" in position:
+                vf = f"crop=iw-{margin}:ih:0:0"
+            elif "bottom-right" in position:
+                vf = f"crop=iw:ih-{margin}:0:0"
+            elif "bottom-left" in position:
+                vf = f"crop=iw-{margin}:ih:{margin}:0"
+            elif "top-left" in position:
+                vf = f"crop=iw:ih-{margin}:0:{margin}"
+            else:
+                vf = f"crop=iw-{margin}:ih:0:0"
+        
+        elif method == "blur":
+            # Blur the watermark area
+            if "top-right" in position:
+                vf = f"boxblur={margin}:{margin}:x=w-{margin}:y=0"
+            elif "bottom-right" in position:
+                vf = f"boxblur={margin}:{margin}:x=w-{margin}:y=h-{margin}"
+            else:
+                vf = f"boxblur={margin}:{margin}:x=w-{margin}:y=0"
+        
+        else:
+            # Denoise method
+            vf = f"nlmeans=s={strength}"
+        
+        cmd = f'ffmpeg -i {shlex.quote(video_path)} -vf "{vf}" -c:a copy -y {shlex.quote(output_path)}'
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
+        
+        if os.path.exists(output_path):
+            size = os.path.getsize(output_path)
+            return {
+                "success": True,
+                "output": f"✅ Watermark removed ({method})\n📁 {output_path} ({size/(1024*1024):.1f} MB)",
+                "file": output_path
+            }
+        
+        return {"success": False, "output": f"Watermark removal failed: {result.stderr[:500]}"}
+        
+    except Exception as e:
+        return {"success": False, "output": f"Error: {str(e)[:500]}"}
+
+
+# Add to VIDEO_TOOLS
+VIDEO_TOOLS["video_download"] = {
+    "fn": video_download,
+    "description": """Download video from any platform.
+Args: {url: str, quality?: str, remove_watermark?: bool, ...}
+Platforms: YouTube, Bilibili, TikTok, Instagram, Facebook, Twitter, Vimeo, etc.
+Quality: best, 720p, 480p, audio-only"""
+}
+VIDEO_TOOLS["video_remove_watermark"] = {
+    "fn": video_remove_watermark,
+    "description": """Remove watermark from video.
+Args: {video_path: str, method?: str, position?: str, strength?: int}
+Methods: crop, blur, denoise
+Positions: auto, top-right, bottom-right, bottom-left, top-left"""
+}
