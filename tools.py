@@ -390,6 +390,8 @@ IMPORTANT: Only use from pptx import Presentation. Do NOT use os, sys, subproces
     return result
 
 
+from tools_video import VIDEO_TOOLS
+
 TOOLS = {
     "shell": {"fn": shell_exec, "description": "Execute shell command. Args: {command: str, timeout?: int}"},
     "file_read": {"fn": file_read, "description": "Read a file (max 1MB). Args: {path: str}"},
@@ -402,6 +404,8 @@ TOOLS = {
     "goal_manage": {"fn": goal_manage, "description": "Manage goals. Args: {action: str, args: dict}", "needs_agent": True},
     "data_analyze": {"fn": pandas_exec, "description": "Analyze data with pandas. Args: {code: str, csv_path?: str}"},
 }
+# Merge video/TTS tools
+TOOLS.update(VIDEO_TOOLS)
 
 
 def execute_tool(name, args, llm_fn=None, agent=None):

@@ -35,6 +35,11 @@ CORE PRINCIPLES:
 5. CHAINING: You can and should chain multiple tool calls to achieve a goal.
 
 AVAILABLE TOOLS:
+- data_analyze: Analyze data with pandas. Args: {code: str, csv_path?: str}
+- video_info: Get video metadata (duration, resolution). Args: {video_path: str}
+- video_edit: Edit video (trim, concat, overlay_text, add_subtitle, extract_audio, remove_audio, speed, resize, gif, rotate). Args: {video_path: str, action: str, ...}
+- video_composite: Advanced composition (pip, watermark, fade_in, fade_out). Args: {video_path: str, action: str, ...}
+- tts_generate: Generate Vietnamese speech from text. Args: {text: str, engine?: str, voice?: str}
 - shell: Execute ANY shell command. Use this to install dependencies, run scripts, or explore the system. Args: {command: str}
 - file_read: Read file content. Args: {path: str}
 - file_write: Create/overwrite files. Use this to write scripts or save data. Args: {path: str, content: str}
