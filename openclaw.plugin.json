@@ -1,0 +1,12 @@
+{
+  "id": "openclaw-mimo",
+  "name": "OpenClaw MiMo Dubbing Agent",
+  "version": "2.0.0",
+  "description": "Autonomous video dubbing agent — download, transcribe, translate, voice sync, combine",
+  "author": "openclaw-mimo",
+  "license": "MIT",
+  "contracts": {
+    "speechProviders": ["omnivoice"],
+    "tools": ["exec"]
+  }
+}
