@@ -684,8 +684,8 @@ def run_pipeline(
             "output_srt": os.path.join(output_dir, "subtitles.srt"),
             "segments": len(segments),
             "processing_time": elapsed,
-            "quality_score": quality_report.get("overall_score", 0),
-            "brain_analysis": brain_analysis,
+            "quality_score": assessment.get("overall_score", 0),
+            "understanding": {k: v for k, v in understanding.items() if k != "segments"},
         }
         
     except Exception as e:
