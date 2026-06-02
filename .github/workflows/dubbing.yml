@@ -7,6 +7,11 @@ on:
         description: 'Video URL (YouTube/Bilibili/etc)'
         required: true
         type: string
+      omnivoice_url:
+        description: 'OmniVoice API URL (Cloudflare tunnel)'
+        required: false
+        type: string
+        default: ''
       source_lang:
         description: 'Source language'
         required: false
@@ -108,7 +113,7 @@ jobs:
           MIMO_API_KEY: ${{ secrets.MIMO_API_KEY }}
           MIMO_API_BASE: ${{ secrets.MIMO_API_BASE || 'https://api.xiaomimimo.com/v1' }}
           MIMO_MODEL: ${{ secrets.MIMO_MODEL || 'mimo-v2.5-pro' }}
-          OMNIVOICE_API_URL: ${{ secrets.OMNIVOICE_API_URL }}
+          OMNIVOICE_API_URL: ${{ github.event.inputs.omnivoice_url || secrets.OMNIVOICE_API_URL }}
           OMNIVOICE_API_KEY: ${{ secrets.OMNIVOICE_API_KEY }}
         run: |
           python3 engines/dubbing_engine.py \
