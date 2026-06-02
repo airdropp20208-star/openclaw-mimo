@@ -185,7 +185,7 @@ class ProfessionalTTS:
         
         try:
             resp = requests.post(
-                f"{self.config.api_url.rstrip('/')}/tts",
+                f"{self.config.api_url.rstrip("/")}/synthesize",
                 json=payload,
                 headers=headers,
                 timeout=self.config.timeout,
