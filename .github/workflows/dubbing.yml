@@ -1,24 +1,14 @@
-name: Professional Dubbing Agent
+name: OpenClaw Dubbing Agent
 
 on:
   workflow_dispatch:
     inputs:
-      video_url:
-        description: 'Video URL (tự động từ OpenClaw bot)'
-        required: false
-        type: string
-        default: ''
       mimo_api_key:
-        description: 'MiMo API Key (não OpenClaw)'
+        description: 'MiMo API Key'
         required: true
         type: string
-      mimo_api_url:
-        description: 'MiMo API URL'
-        required: false
-        type: string
-        default: 'https://api.xiaomimimo.com/v1'
       omnivoice_url:
-        description: 'OmniVoice API URL (Cloudflare tunnel)'
+        description: 'OmniVoice API URL'
         required: true
         type: string
       source_lang:
@@ -38,41 +28,11 @@ on:
         options:
           - Vietnamese
           - English
-      tts_engine:
-        description: 'TTS engine'
-        required: false
-        type: choice
-        default: 'omnivoice'
-        options:
-          - omnivoice
-          - edge
-      voice_instruct:
-        description: 'Voice design (omnivoice)'
+      voice:
+        description: 'Voice instruct'
         required: false
         type: string
         default: 'female, vietnamese accent, natural'
-      emotion:
-        description: 'Voice emotion'
-        required: false
-        type: choice
-        default: 'neutral'
-        options:
-          - neutral
-          - happy
-          - sad
-          - angry
-          - excited
-          - calm
-      subtitle_style:
-        description: 'Subtitle style'
-        required: false
-        type: choice
-        default: 'professional'
-        options:
-          - professional
-          - anime
-          - minimal
-          - default
 
 permissions:
   contents: write
@@ -89,83 +49,25 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
-          pip install -q yt-dlp edge-tts faster-whisper pydub numpy pillow requests
+          pip install -q yt-dlp faster-whisper pydub numpy pillow requests python-telegram-bot
       - name: Test imports
         run: |
           python -c "from engines.dubbing_engine import run_pipeline, DubConfig; print('Engine OK')"
-          python -c "from engines.audio_processor import normalize_loudness, compress_dynamics; print('Audio OK')"
-          python -c "from engines.tts_engine import ProfessionalTTS, TTSConfig; print('TTS OK')"
-          python -c "from engines.video_compositor import SubtitleBurner, AudioMixer; print('Video OK')"
+          python -c "from agent import DubbingAgent; print('Agent OK')"
 
-  dub:
+  deploy:
     needs: test
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    if: github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install deps
+      - name: Deploy info
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
-          pip install -q yt-dlp edge-tts faster-whisper pydub numpy pillow requests
-      - name: Run dubbing
-        env:
-          VIDEO_URL: ${{ github.event.inputs.video_url }}
-          MIMO_API_KEY: ${{ github.event.inputs.mimo_api_key }}
-          MIMO_API_URL: ${{ github.event.inputs.mimo_api_url }}
-          OMNIVOICE_API_URL: ${{ github.event.inputs.omnivoice_url }}
-          SOURCE_LANG: ${{ github.event.inputs.source_lang }}
-          TARGET_LANG: ${{ github.event.inputs.target_lang }}
-          TTS_ENGINE: ${{ github.event.inputs.tts_engine }}
-          VOICE_INSTRUCT: ${{ github.event.inputs.voice_instruct }}
-          EMOTION: ${{ github.event.inputs.emotion }}
-          SUBTITLE_STYLE: ${{ github.event.inputs.subtitle_style }}
-        run: |
-          python3 engines/dubbing_engine.py \
-            --url "$VIDEO_URL" \
-            --source-lang "$SOURCE_LANG" \
-            --target-lang "$TARGET_LANG" \
-            --tts-engine "$TTS_ENGINE" \
-            --omnivoice-url "$OMNIVOICE_API_URL" \
-            --mimo-key "$MIMO_API_KEY" \
-            --mimo-base "$MIMO_API_URL" \
-            --voice-instruct "$VOICE_INSTRUCT" \
-            --emotion "$EMOTION" \
-            --subtitle-style "$SUBTITLE_STYLE" \
-            --output /tmp/output
-      - name: Notify Telegram
-        if: always()
-        env:
-          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          if [ "$TG_TOKEN" != "" ] && [ "$TG_CHAT" != "" ]; then
-            STATUS="${{ job.status }}"
-            RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            
-            if [ "$STATUS" = "success" ]; then
-              MSG="✅ Dubbing done!%0ALink: $RUN_URL"
-              VIDEO_FILE=$(ls /tmp/output/*.mp4 2>/dev/null | head -1)
-              if [ -n "$VIDEO_FILE" ]; then
-                curl -s -X POST "https://api.telegram.org/bot$TG_TOKEN/sendVideo" \
-                  -F "chat_id=$TG_CHAT" \
-                  -F "video=@$VIDEO_FILE" \
-                  -F "caption=🎬 Dubbing done!"
-              fi
-            else
-              MSG="❌ Dubbing failed: $STATUS%0ALink: $RUN_URL"
-            fi
-            
-            curl -s -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
-              -H "Content-Type: application/json" \
-              -d "{\"chat_id\": \"$TG_CHAT\", \"text\": \"$MSG\", \"parse_mode\": \"HTML\"}"
-          fi
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dubbed-video
-          path: /tmp/output/
-          retention-days: 7
+          echo "🚀 Agent ready to deploy!"
+          echo ""
+          echo "Run on server:"
+          echo "  BOT_TOKEN=\$BOT_TOKEN \\"
+          echo "  MIMO_API_KEY=${{ github.event.inputs.mimo_api_key }} \\"
+          echo "  OMNIVOICE_API_URL=${{ github.event.inputs.omnivoice_url }} \\"
+          echo "  ALLOWED_CHATS=\$ALLOWED_CHATS \\"
+          echo "  python3 telegram_agent.py"

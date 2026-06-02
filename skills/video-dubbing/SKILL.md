@@ -1,87 +1,93 @@
 ---
 name: video-dubbing
-description: "Professional video dubbing — download, transcribe, translate, voice clone, sync, process, composite"
-version: 2.0.0
-tools:
-  - exec
-  - web_fetch
+description: "Dubbing video: translate + TTS voice clone + subtitle burn"
+version: 1.0.0
+trigger:
+  - "dub"
+  - "vietsub"
+  - "dubbing"
+  - "translate video"
 ---
 
-# 🎬 Professional Video Dubbing Skill
+# 🎬 Video Dubbing Skill
 
-Full-featured dubbing pipeline with studio-grade quality.
+Translate and dub videos with voice cloning.
 
-## Pipeline
+## When to Use
 
-```
-Download → Extract Audio → Whisper Transcribe (word-level)
-    → MiMo Translate → OmniVoice TTS (voice clone + emotion)
-    → Voice Sync (atempo) → Audio Process (normalize, compress, EQ)
-    → Video Composite (subtitle burn, watermark) → Final Mix
-```
+User sends:
+- Video URL (YouTube, Bilibili, TikTok)
+- "dub <url>"
+- "vietsub <url>"
+- "translate this video"
 
-## Quick Start
+## How It Works
 
-```bash
-python3 engines/dubbing_engine.py \
-  --url "VIDEO_URL" \
-  --source-lang Chinese \
-  --target-lang Vietnamese \
-  --tts-engine omnivoice \
-  --omnivoice-url "http://GPU:8880" \
-  --voice-instruct "female, vietnamese accent, natural" \
-  --emotion neutral \
-  --subtitle-style professional \
-  --output /tmp/output
-```
+1. **Download** video from URL
+2. **Transcribe** audio (Whisper)
+3. **Translate** to target language (MiMo)
+4. **TTS** with voice cloning (OmniVoice)
+5. **Combine** audio + video (FFmpeg)
+6. **Send** result back
 
-## Components
+## Commands
 
-### engines/dubbing_engine.py — Main Pipeline
-Orchestrates all 9 steps with error handling.
+### /dub <url>
+Basic dubbing with default settings.
 
-### engines/audio_processor.py — Audio Processing
-- Loudness normalization (EBU R128)
-- Dynamic range compression
-- Noise gate
-- EQ matching (speech, warm, bright, female, male)
-- Cross-fade with curves
-- Breath detection
+### /dub <url> --voice "female, young adult"
+Custom voice style.
 
-### engines/tts_engine.py — Professional TTS
-- Voice cloning from reference audio
-- Emotion-aware synthesis (happy, sad, angry, neutral, calm)
-- Speed matching with pitch preservation
-- Batch processing
+### /dub <url> --emotion happy
+Dub with emotion.
 
-### engines/video_compositor.py — Video Compositing
-- Subtitle burning (professional, anime, minimal styles)
-- Watermark overlay (image/text)
-- Multi-track audio mixing
-- Video editing (cut, merge, resize, intro/outro)
+### /dub <url> --target English
+Translate to different language.
 
-## Voice Cloning
+## Environment Variables
 
 ```bash
-# Clone voice from reference audio
-python3 engines/dubbing_engine.py \
-  --url "VIDEO_URL" \
-  --tts-engine omnivoice \
-  --omnivoice-url "http://GPU:8880" \
-  --ref-audio /path/to/voice_sample.wav \
-  --output /tmp/output
+BOT_TOKEN=***           # Telegram bot token
+MIMO_API_KEY=***        # MiMo API key (brain)
+MIMO_API_BASE=https://api.xiaomimimo.com/v1
+OMNIVOICE_API_URL=https://your-tunnel.trycloudflare.com  # TTS server
+ALLOWED_CHATS=7563947218  # Allowed chat IDs
 ```
 
-## Emotion Control
+## Pipeline Config
 
 ```python
-config = DubConfig(tts_emotion="happy")  # or sad, angry, excited, calm
+from engines.dubbing_engine import run_pipeline, DubConfig
+
+config = DubConfig(
+    mimo_api_key="***",
+    mimo_api_base="https://api.xiaomimimo.com/v1",
+    omnivoice_url="https://your-tunnel.trycloudflare.com",
+    tts_engine="omnivoice",
+    tts_instruct="female, vietnamese accent, natural",
+    source_lang="Chinese",
+    target_lang="Vietnamese",
+)
+
+result = run_pipeline(url="https://youtube.com/watch?v=xxx", config=config)
 ```
 
-## Audio Quality
+## Agent Integration
 
-The engine applies professional audio processing:
-1. **Noise gate** — removes background noise during silence
-2. **EQ matching** — matches speaker frequency profile
-3. **Dynamic range compression** — balances loud/quiet parts
-4. **Loudness normalization** — EBU R128 standard (-16 LUFS)
+OpenClaw agent calls this skill when user sends video URL:
+
+```python
+# In OpenClaw agent
+if message contains video URL:
+    from engines.dubbing_engine import run_pipeline, DubConfig
+    config = load_config()  # from env vars
+    result = run_pipeline(url=url, config=config)
+    send_video(result["output_video"])
+```
+
+## Pitfalls
+
+1. **OmniVoice URL rotates** — Cloudflare tunnels change. Use health check before calling.
+2. **Long videos take time** — 10+ minute videos can take 5-10 minutes to process.
+3. **API rate limits** — MiMo and OmniVoice have rate limits. Add retry logic.
+4. **File size limits** — Telegram has 50MB limit for videos. Compress if needed.
