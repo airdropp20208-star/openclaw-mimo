@@ -1,136 +1,137 @@
-name: Professional Dubbing Agent
-
-on:
-  workflow_dispatch:
-    inputs:
-      video_url:
-        description: 'Video URL (YouTube/Bilibili/etc)'
-        required: true
-        type: string
-      omnivoice_url:
-        description: 'OmniVoice API URL (Cloudflare tunnel)'
-        required: false
-        type: string
-        default: ''
-      source_lang:
-        description: 'Source language'
-        required: false
-        type: choice
-        default: 'Chinese'
-        options:
-          - Chinese
-          - Japanese
-          - Korean
-      target_lang:
-        description: 'Target language'
-        required: false
-        type: choice
-        default: 'Vietnamese'
-        options:
-          - Vietnamese
-          - English
-      tts_engine:
-        description: 'TTS engine'
-        required: false
-        type: choice
-        default: 'omnivoice'
-        options:
-          - omnivoice
-          - edge
-      voice_instruct:
-        description: 'Voice design (omnivoice)'
-        required: false
-        type: string
-        default: 'female, vietnamese accent, natural'
-      emotion:
-        description: 'Voice emotion'
-        required: false
-        type: choice
-        default: 'neutral'
-        options:
-          - neutral
-          - happy
-          - sad
-          - angry
-          - excited
-          - calm
-      subtitle_style:
-        description: 'Subtitle style'
-        required: false
-        type: choice
-        default: 'professional'
-        options:
-          - professional
-          - anime
-          - minimal
-          - default
-
-permissions:
-  contents: write
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install deps
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
-          pip install -q yt-dlp edge-tts faster-whisper pydub numpy pillow requests
-      - name: Test imports
-        run: |
-          python -c "from engines.dubbing_engine import run_pipeline, DubConfig; print('Engine OK')"
-          python -c "from engines.audio_processor import normalize_loudness, compress_dynamics; print('Audio OK')"
-          python -c "from engines.tts_engine import ProfessionalTTS, TTSConfig; print('TTS OK')"
-          python -c "from engines.video_compositor import SubtitleBurner, AudioMixer; print('Video OK')"
-
-  dub:
-    needs: test
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install deps
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
-          pip install -q yt-dlp edge-tts faster-whisper pydub numpy pillow requests
-      - name: Run dubbing
-        env:
-          VIDEO_URL: ${{ github.event.inputs.video_url }}
-          SOURCE_LANG: ${{ github.event.inputs.source_lang }}
-          TARGET_LANG: ${{ github.event.inputs.target_lang }}
-          TTS_ENGINE: ${{ github.event.inputs.tts_engine }}
-          VOICE_INSTRUCT: ${{ github.event.inputs.voice_instruct }}
-          EMOTION: ${{ github.event.inputs.emotion }}
-          SUBTITLE_STYLE: ${{ github.event.inputs.subtitle_style }}
-          MIMO_API_KEY: ${{ secrets.MIMO_API_KEY }}
-          MIMO_API_BASE: ${{ secrets.MIMO_API_BASE || 'https://api.xiaomimimo.com/v1' }}
-          MIMO_MODEL: ${{ secrets.MIMO_MODEL || 'mimo-v2.5-pro' }}
-          OMNIVOICE_API_URL: ${{ github.event.inputs.omnivoice_url || secrets.OMNIVOICE_API_URL }}
-          OMNIVOICE_API_KEY: ${{ secrets.OMNIVOICE_API_KEY }}
-        run: |
-          python3 engines/dubbing_engine.py \
-            --url "$VIDEO_URL" \
-            --source-lang "$SOURCE_LANG" \
-            --target-lang "$TARGET_LANG" \
-            --tts-engine "$TTS_ENGINE" \
-            --omnivoice-url "$OMNIVOICE_API_URL" \
-            --omnivoice-key "$OMNIVOICE_API_KEY" \
-            --mimo-key "$MIMO_API_KEY" \
-            --voice-instruct "$VOICE_INSTRUCT" \
-            --emotion "$EMOTION" \
-            --subtitle-style "$SUBTITLE_STYLE" \
-            --output /tmp/output
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dubbed-video
-          path: /tmp/output/
-          retention-days: 7
+     1|name: Professional Dubbing Agent
+     2|
+     3|on:
+     4|  workflow_dispatch:
+     5|    inputs:
+     6|      video_url:
+     7|        description: 'Video URL (YouTube/Bilibili/etc)'
+     8|        required: true
+     9|        type: string
+    10|      omnivoice_url:
+    11|        description: 'OmniVoice API URL (Cloudflare tunnel)'
+    12|        required: false
+    13|        type: string
+    14|        default: ''
+    15|      source_lang:
+    16|        description: 'Source language'
+    17|        required: false
+    18|        type: choice
+    19|        default: 'Chinese'
+    20|        options:
+    21|          - Chinese
+    22|          - Japanese
+    23|          - Korean
+    24|      target_lang:
+    25|        description: 'Target language'
+    26|        required: false
+    27|        type: choice
+    28|        default: 'Vietnamese'
+    29|        options:
+    30|          - Vietnamese
+    31|          - English
+    32|      tts_engine:
+    33|        description: 'TTS engine'
+    34|        required: false
+    35|        type: choice
+    36|        default: 'omnivoice'
+    37|        options:
+    38|          - omnivoice
+    39|          - edge
+    40|      voice_instruct:
+    41|        description: 'Voice design (omnivoice)'
+    42|        required: false
+    43|        type: string
+    44|        default: 'female, vietnamese accent, natural'
+    45|      emotion:
+    46|        description: 'Voice emotion'
+    47|        required: false
+    48|        type: choice
+    49|        default: 'neutral'
+    50|        options:
+    51|          - neutral
+    52|          - happy
+    53|          - sad
+    54|          - angry
+    55|          - excited
+    56|          - calm
+    57|      subtitle_style:
+    58|        description: 'Subtitle style'
+    59|        required: false
+    60|        type: choice
+    61|        default: 'professional'
+    62|        options:
+    63|          - professional
+    64|          - anime
+    65|          - minimal
+    66|          - default
+    67|
+    68|permissions:
+    69|  contents: write
+    70|
+    71|jobs:
+    72|  test:
+    73|    runs-on: ubuntu-latest
+    74|    timeout-minutes: 5
+    75|    steps:
+    76|      - uses: actions/checkout@v4
+    77|      - uses: actions/setup-python@v5
+    78|        with:
+    79|          python-version: '3.12'
+    80|      - name: Install deps
+    81|        run: |
+    82|          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+    83|          pip install -q yt-dlp edge-tts faster-whisper pydub numpy pillow requests
+    84|      - name: Test imports
+    85|        run: |
+    86|          python -c "from engines.dubbing_engine import run_pipeline, DubConfig; print('Engine OK')"
+    87|          python -c "from engines.audio_processor import normalize_loudness, compress_dynamics; print('Audio OK')"
+    88|          python -c "from engines.tts_engine import ProfessionalTTS, TTSConfig; print('TTS OK')"
+    89|          python -c "from engines.video_compositor import SubtitleBurner, AudioMixer; print('Video OK')"
+    90|
+    91|  dub:
+    92|    needs: test
+    93|    runs-on: ubuntu-latest
+    94|    timeout-minutes: 120
+    95|    steps:
+    96|      - uses: actions/checkout@v4
+    97|      - uses: actions/setup-python@v5
+    98|        with:
+    99|          python-version: '3.12'
+   100|      - name: Install deps
+   101|        run: |
+   102|          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+   103|          pip install -q yt-dlp edge-tts faster-whisper pydub numpy pillow requests
+   104|      - name: Run dubbing
+   105|        env:
+   106|          VIDEO_URL: ${{ github.event.inputs.video_url }}
+   107|          SOURCE_LANG: ${{ github.event.inputs.source_lang }}
+   108|          TARGET_LANG: ${{ github.event.inputs.target_lang }}
+   109|          TTS_ENGINE: ${{ github.event.inputs.tts_engine }}
+   110|          VOICE_INSTRUCT: ${{ github.event.inputs.voice_instruct }}
+   111|          EMOTION: ${{ github.event.inputs.emotion }}
+   112|          SUBTITLE_STYLE: ${{ github.event.inputs.subtitle_style }}
+   113|          MIMO_API_KEY: ${{ secrets.MIMO_API_KEY }}
+   114|          MIMO_API_BASE: ${{ secrets.MIMO_API_BASE || 'https://api.xiaomimimo.com/v1' }}
+   115|          MIMO_MODEL: ${{ secrets.MIMO_MODEL || 'mimo-v2.5-pro' }}
+   116|          OMNIVOICE_API_URL: ${{ github.event.inputs.omnivoice_url || secrets.OMNIVOICE_API_URL }}
+   117|          OMNIVOICE_API_KEY: ${{ secrets.OMNIVOICE_API_KEY }}
+   118|        run: |
+   119|          python3 engines/dubbing_engine.py \
+   120|            --url "$VIDEO_URL" \
+   121|            --source-lang "$SOURCE_LANG" \
+   122|            --target-lang "$TARGET_LANG" \
+   123|            --tts-engine "$TTS_ENGINE" \
+   124|            --omnivoice-url "$OMNIVOICE_API_URL" \
+   125|            --omnivoice-key "$OMNIVOICE_API_KEY" \
+   126|            --mimo-key "$MIMO_API_KEY" \
+   127|            --voice-instruct "$VOICE_INSTRUCT" \
+   128|            --emotion "$EMOTION" \
+   129|            --subtitle-style "$SUBTITLE_STYLE" \
+   130|            --output /tmp/output
+   131|      - name: Upload artifacts
+   132|        uses: actions/upload-artifact@v4
+   133|        with:
+   134|          name: dubbed-video
+   135|          path: /tmp/output/
+   136|          retention-days: 7
+   137|
