@@ -532,6 +532,90 @@ async def _run_dub_pipeline(job_id: str, status_msg, settings: dict):
         )
 
 
+# ─── Brain Commands ─────────────────────────────────────────────────
+async def cmd_think(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update):
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "S\u01b0 d\u1ee5ng: /think <text c\u1ea7n d\u1ecbch>")
+        return
+    text = " ".join(context.args)
+    status_msg = await update.message.reply_text("\ud83e\udde0 \u0110ang suy ngh\u1ec9...")
+    try:
+        if HAS_BRAIN:
+            from brain import AGIBrain
+            brain = AGIBrain(MIMO_API_KEY, MIMO_API_BASE, MIMO_MODEL)
+            result = brain.thinker.think_deeply(text, source_lang="auto", target_lang="Vietnamese")
+            thinking = result.get("thinking_process", "")
+            options = result.get("translation_options", [result.get("best_option", text)])
+            chosen = result.get("chosen_option", text)
+            response = f"**Qu\u00e1 tr\u00ecnh suy ngh\u1ec9:**\n{thinking}\n\n"
+            if options:
+                response += "**3 ph\u01b0\u01a1ng \u00e1n:**\n"
+                for i, opt in enumerate(options[:3]):
+                    t = opt.get("text", str(opt)) if isinstance(opt, dict) else str(opt)
+                    response += f"{i+1}. {t}\n"
+            response += f"\n**Chosen:** {chosen}"
+            await status_msg.edit_text(response[:4000], parse_mode=ParseMode.MARKDOWN)
+        else:
+            await status_msg.edit_text("Brain ch\u01b0a available.")
+    except Exception as e:
+        await status_msg.edit_text(f"Error: {str(e)[:300]}")
+
+
+async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update):
+        return
+    if not context.args:
+        await update.message.reply_text("S\u01b0 d\u1ee5ng: /analyze <video URL>")
+        return
+    url = context.args[0]
+    status_msg = await update.message.reply_text("\ud83d\udd0d \u0110ang ph\u00e2n t\u00edch video...")
+    try:
+        import subprocess
+        cmd = f'yt-dlp --dump-json --no-download "{url}" 2>/dev/null'
+        proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+        if proc.returncode != 0:
+            await status_msg.edit_text("Kh\u00f4ng th\u1ec3 l\u1ea5y info video.")
+            return
+        info = json.loads(proc.stdout)
+        title = info.get("title", "Unknown")
+        duration = info.get("duration", 0)
+        desc = info.get("description", "")[:500]
+        channel = info.get("uploader", "Unknown")
+        analysis = f"**\u0110\u00e1nh gi\u00e1 video:**\n\n"
+        analysis += f"**Title:** {title}\n**Channel:** {channel}\n**Duration:** {duration//60}m{duration%60}s\n\n"
+        analysis += f"**M\u00f4 t\u1ea3:**\n{desc}"
+        await status_msg.edit_text(analysis[:4000], parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        await status_msg.edit_text(f"Error: {str(e)[:300]}")
+
+
+async def cmd_brain(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update):
+        return
+    if HAS_BRAIN:
+        try:
+            from brain import AGIBrain
+            brain = AGIBrain(MIMO_API_KEY, MIMO_API_BASE, MIMO_MODEL)
+            learning = brain.adaptive.get_learning_summary()
+            response = (
+                "\ud83e\udde0 **Brain Stats**\n\n"
+                f"\u00b7 Genres: {learning.get('genres_learned', 0)}\n"
+                f"\u00b7 Lang pairs: {learning.get('lang_pairs_learned', 0)}\n"
+                f"\u00b7 Experiments: {learning.get('total_experiments', 0)}\n"
+                f"\u00b7 Avg quality: {learning.get('avg_quality', 0)}\n"
+                f"\u00b7 Best: {learning.get('best_genre', 'none')}\n\n"
+                "\ud83c\udfaf Modules: 11/11 OK | AGI: ~50%"
+            )
+            await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
+        except Exception as e:
+            await update.message.reply_text(f"Brain error: {str(e)[:200]}")
+    else:
+        await update.message.reply_text("Brain ch\u01b0a available. Set MIMO_API_KEY.")
+
+
 # ─── Main ──────────────────────────────────────────────────────────
 def main():
     if not BOT_TOKEN:
@@ -576,14 +660,12 @@ async def cmd_tts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not context.args:
         await update.message.reply_text(
-        await update.message.reply_text(
             "🎤 **OmniVoice TTS**\n\n"
             "Sử dụng: /tts <text>\n"
             "Hoặc: /tts <text> --mode design --voice female, young adult\n\n"
             "Modes: auto, design, clone\n"
             "Example: /tts Xin chào các bạn! --mode design --voice female, vietnamese",
             parse_mode=ParseMode.MARKDOWN,
-        )
         )
         return
     

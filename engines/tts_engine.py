@@ -124,8 +124,7 @@ class ProfessionalTTS:
         self._validate_config()
     
     def _validate_config(self):
-        if not self.config.api_url:
-            raise ValueError("OMNIVOICE_API_URL is required")
+        pass  # api_url optional - Edge TTS fallback available
     
     def generate(
         self,
@@ -174,6 +173,11 @@ class ProfessionalTTS:
                 payload["ref_text"] = ref_text
             payload.pop("instruct", None)  # Don't use instruct with cloning
         
+        # Skip OmniVoice if no URL configured
+        if not self.config.api_url:
+            print("  No OmniVoice URL, using Edge TTS directly")
+            return self._edge_tts_fallback(text, output_path, emotion)
+        
         # Call API
         headers = {}
         if self.config.api_key:
@@ -199,8 +203,65 @@ class ProfessionalTTS:
             return output_path
             
         except Exception as e:
-            raise RuntimeError(f"TTS generation failed: {e}")
+            print(f"  OmniVoice failed: {e}, falling back to Edge TTS...")
+            return self._edge_tts_fallback(text, output_path, emotion)
     
+    def _edge_tts_fallback(self, text: str, output_path: str, emotion: str = "neutral") -> str:
+        """Edge TTS fallback when OmniVoice is unavailable."""
+        try:
+            import edge_tts
+            import asyncio
+            
+            # Map emotions to Edge TTS voices
+            voice_map = {
+                "neutral": "vi-VN-HoaiMyNeural",
+                "happy": "vi-VN-HoaiMyNeural",
+                "sad": "vi-VN-HoaiMyNeural",
+                "angry": "vi-VN-NamMinhNeural",
+                "excited": "vi-VN-HoaiMyNeural",
+                "calm": "vi-VN-HoaiMyNeural",
+                "male": "vi-VN-NamMinhNeural",
+            }
+            
+            voice = voice_map.get(emotion, "vi-VN-HoaiMyNeural")
+            
+            # Adjust rate based on emotion
+            rate = "+0%"
+            if emotion in ("excited", "happy"):
+                rate = "+10%"
+            elif emotion in ("sad", "calm"):
+                rate = "-10%"
+            
+            async def _generate():
+                communicate = edge_tts.Communicate(text, voice, rate=rate)
+                await communicate.save(output_path)
+            
+            asyncio.run(_generate())
+            print(f"  ✅ Edge TTS: {output_path}")
+            return output_path
+            
+        except Exception as e2:
+            raise RuntimeError(f"All TTS engines failed: OmniVoice={e2}")
+
+    def health_check(self) -> dict:
+        """Check TTS engine health."""
+        result = {"omnivoice": False, "edge_tts": False}
+        
+        if self.config.api_url:
+            try:
+                resp = requests.get(f"{self.config.api_url}/health", timeout=5)
+                result["omnivoice"] = resp.status_code == 200
+            except:
+                pass
+        
+        try:
+            import edge_tts
+            result["edge_tts"] = True
+        except ImportError:
+            pass
+        
+        return result
+
     def generate_batch(
         self,
         items: list[dict],

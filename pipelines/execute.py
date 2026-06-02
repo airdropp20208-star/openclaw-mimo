@@ -262,16 +262,12 @@ def burn_subtitles(segments: list[dict], video_path: str, output_dir: str, style
                 continue
             start = _srt_time(seg["start"])
             end = _srt_time(seg["end"])
-            f.write(f"{i+1}
-{start} --> {end}
-{text}
-
-")
+            f.write(f"{i+1}\n{start} --> {end}\n{text}\n\n")
     
     output = os.path.join(output_dir, "dubbed.mp4")
-    cmd = f'ffmpeg -i "{video_path}" -vf "subtitles='{srt_path}'" -c:v libx264 -crf 18 -c:a copy -y "{output}" 2>/dev/null'
+    cmd = ["ffmpeg", "-i", video_path, "-vf", f"subtitles={srt_path}", "-c:v", "libx264", "-crf", "18", "-c:a", "copy", "-y", output]
     subprocess.run(cmd, shell=True, timeout=300)
-    
+    subprocess.run(cmd, timeout=300)
     if os.path.exists(output):
         return output
     # Fallback: copy without subtitles
