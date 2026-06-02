@@ -3,6 +3,10 @@ name: OpenClaw Dubbing Agent
 on:
   workflow_dispatch:
     inputs:
+      video_url:
+        description: 'Video URL to dub'
+        required: true
+        type: string
       mimo_api_key:
         description: 'MiMo API Key'
         required: true
@@ -38,9 +42,9 @@ permissions:
   contents: write
 
 jobs:
-  test:
+  dub:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -50,24 +54,19 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
           pip install -q yt-dlp faster-whisper pydub numpy pillow requests python-telegram-bot
-      - name: Test imports
+      - name: Run dubbing
+        env:
+          MIMO_API_KEY: ${{ github.event.inputs.mimo_api_key }}
+          OMNIVOICE_API_URL: ${{ github.event.inputs.omnivoice_url }}
         run: |
-          python -c "from engines.dubbing_engine import run_pipeline, DubConfig; print('Engine OK')"
-          python -c "from agent import DubbingAgent; print('Agent OK')"
-
-  deploy:
-    needs: test
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - uses: actions/checkout@v4
-      - name: Deploy info
-        run: |
-          echo "🚀 Agent ready to deploy!"
-          echo ""
-          echo "Run on server:"
-          echo "  BOT_TOKEN=\$BOT_TOKEN \\"
-          echo "  MIMO_API_KEY=${{ github.event.inputs.mimo_api_key }} \\"
-          echo "  OMNIVOICE_API_URL=${{ github.event.inputs.omnivoice_url }} \\"
-          echo "  ALLOWED_CHATS=\$ALLOWED_CHATS \\"
-          echo "  python3 telegram_agent.py"
+          python3 agent.py --url "${{ github.event.inputs.video_url }}" \
+            --source-lang "${{ github.event.inputs.source_lang }}" \
+            --target-lang "${{ github.event.inputs.target_lang }}" \
+            --voice "${{ github.event.inputs.voice }}"
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dubbed-output
+          path: /tmp/dub_output/
+          retention-days: 7

@@ -12,13 +12,13 @@ Flow:
 
 Usage:
   # As OpenClaw skill
-  from agent import dubbing_agent
-  result = dubbing_agent(url="https://youtube.com/...", target_lang="Vietnamese")
+  result = dub_video(url="https://youtube.com/...", target_lang="Vietnamese")
   
   # As standalone
   BOT_TOKEN=*** python3 agent.py
 """
 
+import json
 import os
 import sys
 import time
@@ -223,8 +223,31 @@ def brain_stats() -> dict:
     return get_agent().brain_stats()
 
 
-# ─── Telegram Bot Mode ──────────────────────────────────────────────
-if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--telegram":
-    """Run as Telegram bot."""
-    from telegram_agent import main
-    main()
+# ─── CLI Mode ─────────────────────────────────────────────────────
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="OpenClaw MiMo Dubbing Agent")
+    parser.add_argument("--url", default="", help="Video URL to dub")
+    parser.add_argument("--video", default="", help="Local video path")
+    parser.add_argument("--source-lang", default="Chinese", help="Source language")
+    parser.add_argument("--target-lang", default="Vietnamese", help="Target language")
+    parser.add_argument("--voice", default="female, vietnamese accent, natural", help="Voice instruct")
+    parser.add_argument("--telegram", action="store_true", help="Run as Telegram bot")
+    args, _ = parser.parse_known_args()
+
+    if args.telegram:
+        from telegram_agent import main
+        main()
+    elif args.url or args.video:
+        result = dub_video(
+            url=args.url,
+            video_path=args.video,
+            source_lang=args.source_lang,
+            target_lang=args.target_lang,
+            voice=args.voice,
+        )
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        sys.exit(0 if result.get("success") else 1)
+    else:
+        parser.print_help()
