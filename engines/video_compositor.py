@@ -70,14 +70,15 @@ SUBTITLE_STYLES = {
     },
     "professional": {
         "font": "Noto Sans CJK",
-        "size": 22,
-        "color": "&H00FFFFFF",
-        "outline_color": "&H80000000",
-        "outline": 3,
+        "size": 24,
+        "color": "&H0000FFFF",  # Golden yellow (ASS format: AABBGGRR)
+        "outline_color": "&H00000000",  # Thick black outline
+        "outline": 4,
         "shadow": 2,
         "position": "bottom",
-        "margin_v": 25,
+        "margin_v": 20,
         "bold": True,
+        "alignment": 2,  # Bottom center
     },
     "anime": {
         "font": "Noto Sans CJK",
