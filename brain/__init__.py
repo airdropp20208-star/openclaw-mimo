@@ -19,6 +19,11 @@ from .strategy_selector import StrategySelector
 from .quality_assessor import QualityAssessor
 from .self_learner import SelfLearner
 from .human_thinker import HumanThinker
+from .scene_understander import SceneUnderstander
+from .adaptive_engine import AdaptiveEngine
+from .proactive_recovery import ProactiveRecovery
+from .emotional_continuity import EmotionalContinuity
+from .autonomous_planner import AutonomousPlanner
 
 class AGIBrain:
     """
@@ -33,6 +38,11 @@ class AGIBrain:
         self.quality = QualityAssessor(mimo_api_key, mimo_api_base, mimo_model)
         self.learner = SelfLearner()
         self.thinker = HumanThinker(mimo_api_key, mimo_api_base, mimo_model)
+        self.scene = SceneUnderstander(mimo_api_key, mimo_api_base, mimo_model)
+        self.adaptive = AdaptiveEngine()
+        self.recovery = ProactiveRecovery(mimo_api_key, mimo_api_base, mimo_model)
+        self.emotional = EmotionalContinuity()
+        self.planner = AutonomousPlanner(self)
     
     def analyze(self, segments: list[dict], source_lang: str, target_lang: str) -> dict:
         """
@@ -83,6 +93,39 @@ class AGIBrain:
         
         return segments
     
+
+
+    def create_plan(self, task: dict) -> dict:
+        """Autonomously plan the entire dubbing approach."""
+        return self.planner.create_plan(task)
+    
+    def understand_scene(self, video_path: str, segments: list[dict] = None) -> dict:
+        """Multi-modal scene understanding — see the video like a human."""
+        return self.scene.analyze_video(video_path, segments)
+    
+    def build_emotional_arc(self, segments: list[dict], context: dict = None) -> dict:
+        """Build consistent emotional arc for the entire video."""
+        return self.emotional.build_arc(segments, context)
+    
+    def apply_emotional_arc(self, segments: list[dict], arc: dict) -> list[dict]:
+        """Apply emotional arc to segments for smooth flow."""
+        return self.emotional.apply_arc(segments, arc)
+    
+    def get_adaptive_strategy(self, genre: str, source_lang: str, target_lang: str) -> dict:
+        """Get self-optimized strategy based on past learning."""
+        return self.adaptive.get_optimized_strategy(genre, source_lang, target_lang)
+    
+    def record_job_result(self, job_result: dict, strategy: dict):
+        """Record results for adaptive learning."""
+        self.adaptive.record_result(job_result, strategy)
+    
+    def diagnose_error(self, error: str, step: str, context: dict = None) -> dict:
+        """Smart error diagnosis and recovery planning."""
+        return self.recovery.diagnose(error, step, context)
+    
+    def get_adaptive_summary(self) -> dict:
+        """Get summary of adaptive learning."""
+        return self.adaptive.get_learning_summary()
 
     def think(self, question: str, context: dict = None) -> dict:
         """Chain-of-thought reasoning on any question."""

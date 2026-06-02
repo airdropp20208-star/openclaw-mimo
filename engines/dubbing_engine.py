@@ -571,6 +571,28 @@ def run_pipeline(
         if not video_path or not os.path.exists(video_path):
             return {"success": False, "error": "No video provided"}
         
+        # 🧠 Brain Step: Scene understanding (see the video)
+        scene_data = {}
+        if brain:
+            try:
+                log("👁️ Analyzing video scenes...")
+                scene_data = brain.understand_scene(video_path)
+                log(f"👁️ Scenes: {scene_data.get('keyframe_count', 0)} keyframes, mood={scene_data.get('visual_mood', {}).get('primary', '?')}")
+            except Exception as e:
+                log(f"  ⚠️ Scene analysis failed: {e}")
+        
+        # 🧠 Brain Step: Get adaptive strategy from past learning
+        adaptive_strategy = {}
+        if brain:
+            try:
+                adaptive_strategy = brain.get_adaptive_strategy(
+                    scene_data.get("visual_mood", {}).get("primary", "unknown"),
+                    source_lang, target_lang
+                )
+                log(f"🧠 Adaptive strategy confidence: {adaptive_strategy.get('confidence', 0):.0%}")
+            except:
+                pass
+        
         # Step 2: Extract audio
         audio_path = step_extract_audio(video_path, output_dir)
         
@@ -600,6 +622,17 @@ def run_pipeline(
             except Exception as e:
                 log(f"  ⚠️ Brain refinement failed: {e}")
         
+        # 🧠 Brain Step: Build emotional arc for consistency
+        emotional_arc = {}
+        if brain:
+            try:
+                emotional_arc = brain.build_emotional_arc(segments, brain_analysis.get("context", {}))
+                segments = brain.apply_emotional_arc(segments, emotional_arc)
+                log(f"🎭 Emotional arc: {emotional_arc.get('dominant_mood', '?')}, range={emotional_arc.get('emotional_range', [])}")
+                _save_json(emotional_arc, os.path.join(output_dir, "emotional_arc.json"))
+            except Exception as e:
+                log(f"  ⚠️ Emotional continuity failed: {e}")
+        
         _save_json(segments, os.path.join(output_dir, "translated.json"))
         
         # Step 5: TTS
@@ -626,6 +659,16 @@ def run_pipeline(
                 quality_report = brain.assess_and_retry(segments, output_dir, brain_analysis)
                 score = quality_report.get("overall_score", 0)
                 log(f"🧠 Quality score: {score}/100")
+                
+                # 🧠 Brain Step: Adaptive learning — record this result
+                strategy_used = brain_analysis.get("strategy", {})
+                strategy_used["genre"] = brain_analysis.get("context", {}).get("genre", "unknown")
+                brain.record_job_result({
+                    "quality_score": score,
+                    "source_lang": source_lang,
+                    "target_lang": target_lang,
+                }, strategy_used)
+                log(f"🧠 Adaptive learning: recorded result for future optimization")
             except Exception as e:
                 log(f"  ⚠️ Quality assessment failed: {e}")
         
