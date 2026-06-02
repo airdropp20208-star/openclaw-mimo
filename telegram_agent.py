@@ -57,6 +57,13 @@
     57|DEFAULT_VOICE = "female, vietnamese accent, natural"
     58|DEFAULT_EMOTION = "neutral"
     59|DEFAULT_SUBTITLE_STYLE = "professional"
+
+# AGI Brain
+try:
+    from brain import AGIBrain
+    HAS_BRAIN = True
+except ImportError:
+    HAS_BRAIN = False
     60|
     61|
     62|# ─── State Management ──────────────────────────────────────────────
@@ -133,7 +140,7 @@
    133|        "/dub `<url>` — Vietsub video từ URL\n"
    134|        "/settings — Xem/sửa cài đặt\n"
    135|        "/status — Xem trạng thái jobs\n"
-   136|        "/help — Hướng dẫn sử dụng\n\n"
+   136|        "/analyze <url> — 🧠 Phân tích video\n        /brain — 🧠 Xem stats brain\n        /help — Hướng dẫn sử dụng\n\n"
    137|        "**Cài đặt hiện tại:**\n"
    138|        f"• Ngôn ngữ: {DEFAULT_SOURCE_LANG} → {DEFAULT_TARGET_LANG}\n"
    139|        f"• TTS: {DEFAULT_TTS_ENGINE}\n"
@@ -543,7 +550,9 @@
    543|    app.add_handler(CommandHandler("help", cmd_help))
    544|    app.add_handler(CommandHandler("dub", cmd_dub))
    545|    app.add_handler(CommandHandler("settings", cmd_settings))
-   546|    app.add_handler(CommandHandler("status", cmd_status))\n    app.add_handler(CommandHandler("tts", cmd_tts))
+   546|    app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("analyze", cmd_analyze))
+    app.add_handler(CommandHandler("brain", cmd_brain))\n    app.add_handler(CommandHandler("tts", cmd_tts))
    547|    
    548|    # Callbacks
    549|    app.add_handler(CallbackQueryHandler(handle_callback))

@@ -39,6 +39,13 @@ from video_compositor import (
 
 import requests
 
+# AGI Brain
+try:
+    from brain import AGIBrain
+    HAS_BRAIN = True
+except ImportError:
+    HAS_BRAIN = False
+
 
 # ─── Config ────────────────────────────────────────────────────────
 @dataclass
@@ -80,6 +87,10 @@ class DubConfig:
     
     # Output
     output_dir: str = "/tmp/dub_output"
+    
+    # AGI Brain
+    use_brain: bool = True
+    max_retries: int = 2
 
 
 def log(msg, level="INFO"):
@@ -171,9 +182,9 @@ def step_transcribe(audio_path: str, source_lang: str, config: DubConfig) -> lis
     return result
 
 
-def step_translate(segments: list[dict], source_lang: str, target_lang: str, config: DubConfig) -> list[dict]:
-    """Step 4: Translate using MiMo API."""
-    log(f"🌐 Step 4: Translating {source_lang} → {target_lang}...")
+def step_translate(segments: list[dict], source_lang: str, target_lang: str, config: DubConfig, brain_analysis: dict = None) -> list[dict]:
+    """Step 4: Translate using MiMo API (brain-enhanced)."""
+    log(f"🧠 Step 4: Translating {source_lang} → {target_lang} (brain-enhanced)...")
     
     if not config.mimo_api_key:
         log("  ⚠️ No MIMO_API_KEY, skipping translation")
@@ -182,12 +193,33 @@ def step_translate(segments: list[dict], source_lang: str, target_lang: str, con
     # Batch translate for context
     numbered = "\n".join(f"{i+1}. {s['text']}" for i, s in enumerate(segments))
     
-    prompt = f"""Translate the following {source_lang} dialogue to {target_lang}.
+    # Brain-enhanced translation prompt
+    context_info = ""
+    strategy_info = ""
+    if brain_analysis:
+        ctx = brain_analysis.get("context", {})
+        strat = brain_analysis.get("strategy", {})
+        translation_cfg = strat.get("translation", {})
+        context_info = f"Context: Genre={ctx.get('genre', 'unknown')}, Formality={ctx.get('formality', 'casual')}, Audience={ctx.get('target_audience', 'general')}, Humor={ctx.get('humor_type', 'none')}"
+        strategy_info = f"Method: {translation_cfg.get('method', 'adaptive')}, Preserve humor: {translation_cfg.get('preserve_humor', True)}"
+    
+    prompt = f"""Translate the following {source_lang} dialogue to {target_lang} for VIDEO DUBBING.
 Keep the EXACT same numbering (1. 2. 3. etc).
-Translate naturally for video dubbing — conversational, emotional, concise.
-Only output the numbered translations, nothing else.
+Translate naturally — CONVERSATIONAL, EMOTIONAL, CONCISE.
+The translations will be spoken aloud by a voice actor.
+{context_info}
+{strategy_info}
 
-{numbered}"""
+CRITICAL RULES:
+- Keep the same emotional intensity as the original
+- Use natural Vietnamese that people actually speak
+- Preserve cultural references when possible
+- Make humor funny in Vietnamese, not just literal
+- Keep sentences short for voice acting
+
+{numbered}
+
+Output ONLY the numbered translations:""
     
     payload = {
         "model": config.mimo_model,
@@ -515,10 +547,20 @@ def run_pipeline(
     output_dir = config.output_dir
     os.makedirs(output_dir, exist_ok=True)
     
-    lang_codes = {"Chinese": "zh", "Japanese": "ja", "Korean": "ko"}
+    lang_codes = {"Chinese": "zh", "Japanese": "ja", "Korean": "ko", "English": "en"}
     source_code = lang_codes.get(source_lang, "zh")
     
     start_time = time.time()
+    brain_analysis = {}
+    
+    # Initialize AGI Brain
+    brain = None
+    if config.use_brain and HAS_BRAIN:
+        try:
+            brain = AGIBrain(config.mimo_api_key, config.mimo_api_base, config.mimo_model)
+            log("🧠 AGI Brain initialized")
+        except Exception as e:
+            log(f"  ⚠️ Brain init failed: {e}")
     
     try:
         # Step 1: Download
@@ -535,8 +577,28 @@ def run_pipeline(
         segments = step_transcribe(audio_path, source_code, config)
         _save_json(segments, os.path.join(output_dir, "segments.json"))
         
-        # Step 4: Translate
-        segments = step_translate(segments, source_lang, target_lang, config)
+        # 🧠 Brain Step: Deep analysis
+        if brain:
+            try:
+                brain_analysis = brain.analyze(segments, source_lang, target_lang)
+                genre = brain_analysis.get("context", {}).get("genre", "?")
+                method = brain_analysis.get("strategy", {}).get("translation", {}).get("method", "?")
+                log(f"🧠 Brain: genre={genre}, translation={method}")
+                _save_json(brain_analysis, os.path.join(output_dir, "brain_analysis.json"))
+            except Exception as e:
+                log(f"  ⚠️ Brain analysis failed: {e}")
+        
+        # Step 4: Translate (brain-enhanced)
+        segments = step_translate(segments, source_lang, target_lang, config, brain_analysis)
+        
+        # 🧠 Brain Step: Post-translation refinement
+        if brain:
+            try:
+                segments = brain.post_translate(segments, brain_analysis)
+                log("🧠 Brain post-translation refinement done")
+            except Exception as e:
+                log(f"  ⚠️ Brain refinement failed: {e}")
+        
         _save_json(segments, os.path.join(output_dir, "translated.json"))
         
         # Step 5: TTS
@@ -556,9 +618,21 @@ def run_pipeline(
         final_video = step_subtitles(segments, dubbed_video, output_dir, config)
         
         elapsed = time.time() - start_time
+        # 🧠 Brain Step: Quality assessment
+        quality_report = {}
+        if brain:
+            try:
+                quality_report = brain.assess_and_retry(segments, output_dir, brain_analysis)
+                score = quality_report.get("overall_score", 0)
+                log(f"🧠 Quality score: {score}/100")
+            except Exception as e:
+                log(f"  ⚠️ Quality assessment failed: {e}")
+        
         log(f"\n🎉 Done in {elapsed:.0f}s!")
         log(f"  📹 Video: {final_video}")
         log(f"  📄 Subtitles: {os.path.join(output_dir, 'subtitles.srt')}")
+        if quality_report:
+            log(f"  🧠 Quality: {quality_report.get('overall_score', 0)}/100")
         
         return {
             "success": True,
@@ -566,6 +640,8 @@ def run_pipeline(
             "output_srt": os.path.join(output_dir, "subtitles.srt"),
             "segments": len(segments),
             "processing_time": elapsed,
+            "quality_score": quality_report.get("overall_score", 0),
+            "brain_analysis": brain_analysis,
         }
         
     except Exception as e:

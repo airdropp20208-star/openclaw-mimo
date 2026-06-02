@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""
+AGI Brain — Intelligence Layer for OpenClaw MiMo
+=================================================
+Adds reasoning, emotion detection, strategy selection,
+quality assessment, and self-learning to the dubbing pipeline.
+
+Modules:
+- ContextEngine: Deep semantic understanding of dialogue
+- EmotionDetector: Multi-modal emotion analysis (audio + text)
+- StrategySelector: Auto-select dubbing approach per scene
+- QualityAssessor: Self-evaluate output quality
+- SelfLearner: Learn from user feedback over time
+"""
+
+from .context_engine import ContextEngine
+from .emotion_detector import EmotionDetector
+from .strategy_selector import StrategySelector
+from .quality_assessor import QualityAssessor
+from .self_learner import SelfLearner
+
+class AGIBrain:
+    """
+    Central brain that orchestrates all intelligence modules.
+    Replaces the fixed pipeline with adaptive, reasoning-based processing.
+    """
+    
+    def __init__(self, mimo_api_key: str = "", mimo_api_base: str = "", mimo_model: str = "mimo-v2.5-pro"):
+        self.context = ContextEngine(mimo_api_key, mimo_api_base, mimo_model)
+        self.emotion = EmotionDetector(mimo_api_key, mimo_api_base, mimo_model)
+        self.strategy = StrategySelector(self.context, self.emotion)
+        self.quality = QualityAssessor(mimo_api_key, mimo_api_base, mimo_model)
+        self.learner = SelfLearner()
+    
+    def analyze(self, segments: list[dict], source_lang: str, target_lang: str) -> dict:
+        """
+        Full brain analysis before translation.
+        Returns enriched context for the pipeline.
+        """
+        # 1. Deep context analysis
+        full_text = "\n".join(s["text"] for s in segments)
+        context = self.context.analyze(full_text, source_lang, target_lang)
+        
+        # 2. Emotion analysis per segment
+        for seg in segments:
+            seg["emotion"] = self.emotion.detect_from_text(seg["text"], context)
+        
+        # 3. Global emotion arc
+        emotion_arc = self.emotion.compute_arc(segments)
+        context["emotion_arc"] = emotion_arc
+        
+        # 4. Select strategy
+        strategy = self.strategy.select(segments, context)
+        
+        return {
+            "context": context,
+            "strategy": strategy,
+            "emotion_arc": emotion_arc,
+        }
+    
+    def post_translate(self, segments: list[dict], context: dict) -> list[dict]:
+        """
+        After translation: refine based on context understanding.
+        Adjusts emotions, pacing, and cultural adaptation.
+        """
+        # Apply emotion arc to segments
+        emotion_arc = context.get("emotion_arc", {})
+        
+        for seg in segments:
+            # Match emotion to arc position
+            pos = seg["start"] / max(emotion_arc.get("total_duration", 1), 0.01)
+            dominant = self._get_emotion_at_pos(emotion_arc, pos)
+            if dominant and seg.get("emotion") == "neutral":
+                seg["emotion"] = dominant
+            seg["emotion"] = seg.get("emotion", "neutral")
+        
+        # Cultural adaptation pass
+        strategy = context.get("strategy", {})
+        if strategy.get("cultural_adapt", True):
+            segments = self.context.cultural_adapt(segments, target_lang="Vietnamese")
+        
+        return segments
+    
+    def assess_and_retry(self, segments: list[dict], output_dir: str, context: dict) -> dict:
+        """
+        After pipeline: assess quality, suggest retries if needed.
+        """
+        return self.quality.assess(segments, output_dir, context)
+    
+    def learn(self, job_result: dict, user_feedback: dict = None):
+        """
+        Learn from completed job + optional feedback.
+        """
+        self.learner.record_job(job_result, user_feedback)
+    
+    def get_learned_preferences(self, user_id: str = "default") -> dict:
+        """Get learned preferences for a user."""
+        return self.learner.get_preferences(user_id)
+    
+    def _get_emotion_at_pos(self, emotion_arc: dict, pos: float) -> str:
+        """Get dominant emotion at position (0.0-1.0) in the arc."""
+        segments = emotion_arc.get("segments", [])
+        if not segments:
+            return ""
+        # Find the emotion segment that covers this position
+        for emo_seg in segments:
+            if emo_seg.get("start_pos", 0) <= pos <= emo_seg.get("end_pos", 1):
+                return emo_seg.get("emotion", "")
+        return ""
+
+__all__ = ["AGIBrain", "ContextEngine", "EmotionDetector", "StrategySelector", "QualityAssessor", "SelfLearner"]
