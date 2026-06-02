@@ -129,7 +129,7 @@ class SubtitleBurner:
         cmd = (
             f'ffmpeg -i "{video_path}" '
             f'-vf "subtitles=\'{srt_path}\':force_style=\'{force_style}\'{fonts}" '
-            f'-c:v libx264 -crf 18 -preset medium '
+            f'-c:v libx264 -crf 23 -preset fast '
             f'-c:a copy '
             f'-y "{output_path}" 2>/dev/null'
         )

@@ -206,7 +206,7 @@ class ProfessionalTTS:
             print(f"  OmniVoice failed: {e}, falling back to Edge TTS...")
             return self._edge_tts_fallback(text, output_path, emotion)
     
-    def _edge_tts_fallback(self, text: str, output_path: str, emotion: str = "neutral") -> str:
+    def _edge_tts_fallback(self, text: str, output_path: str, emotion: str = "neutral", retries: int = 3) -> str:
         """Edge TTS fallback when OmniVoice is unavailable."""
         try:
             import edge_tts
@@ -236,9 +236,17 @@ class ProfessionalTTS:
                 communicate = edge_tts.Communicate(text, voice, rate=rate)
                 await communicate.save(output_path)
             
-            asyncio.run(_generate())
-            print(f"  ✅ Edge TTS: {output_path}")
-            return output_path
+            for attempt in range(retries):
+                try:
+                    asyncio.run(_generate())
+                    print(f"  ✅ Edge TTS: {output_path}")
+                    return output_path
+                except Exception:
+                    if attempt < retries - 1:
+                        import time
+                        time.sleep(1 + attempt)
+                    else:
+                        raise
             
         except Exception as e2:
             raise RuntimeError(f"All TTS engines failed: OmniVoice={e2}")
