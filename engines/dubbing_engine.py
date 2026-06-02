@@ -21,6 +21,9 @@ import sys
 import time
 from dataclasses import dataclass, field
 
+# Add engines/ to path for local imports
+sys.path.insert(0, os.path.dirname(__file__))
+
 # Local imports
 from audio_processor import (
     normalize_loudness,
@@ -220,7 +223,7 @@ CRITICAL RULES:
 
 {numbered}
 
-Output ONLY the numbered translations:""
+Output ONLY the numbered translations:"""
     
     payload = {
         "model": config.mimo_model,

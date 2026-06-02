@@ -5,8 +5,17 @@
   "description": "Autonomous video dubbing agent — download, transcribe, translate, voice sync, combine",
   "author": "openclaw-mimo",
   "license": "MIT",
+  "channel": {
+    "name": "Sơn vietsub dạo",
+    "handle": "@sonvietsubdao",
+    "platform": "youtube"
+  },
   "contracts": {
-    "speechProviders": ["omnivoice"],
-    "tools": ["exec"]
+    "speechProviders": [
+      "omnivoice"
+    ],
+    "tools": [
+      "exec"
+    ]
   }
 }
