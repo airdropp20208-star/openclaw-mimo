@@ -4,9 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       video_url:
-        description: 'Video URL (YouTube/Bilibili/etc)'
-        required: true
+        description: 'Video URL (tự động từ OpenClaw bot)'
+        required: false
         type: string
+        default: ''
       mimo_api_key:
         description: 'MiMo API Key (não OpenClaw)'
         required: true
@@ -145,8 +146,7 @@ jobs:
             RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             
             if [ "$STATUS" = "success" ]; then
-              MSG="✅ Dubbing done!%0A📺 ${{ github.event.inputs.video_url }}%0A🔗 $RUN_URL"
-              # Send video if exists
+              MSG="✅ Dubbing done!%0ALink: $RUN_URL"
               VIDEO_FILE=$(ls /tmp/output/*.mp4 2>/dev/null | head -1)
               if [ -n "$VIDEO_FILE" ]; then
                 curl -s -X POST "https://api.telegram.org/bot$TG_TOKEN/sendVideo" \
