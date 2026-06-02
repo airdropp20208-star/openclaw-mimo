@@ -18,6 +18,7 @@ from .emotion_detector import EmotionDetector
 from .strategy_selector import StrategySelector
 from .quality_assessor import QualityAssessor
 from .self_learner import SelfLearner
+from .human_thinker import HumanThinker
 
 class AGIBrain:
     """
@@ -31,6 +32,7 @@ class AGIBrain:
         self.strategy = StrategySelector(self.context, self.emotion)
         self.quality = QualityAssessor(mimo_api_key, mimo_api_base, mimo_model)
         self.learner = SelfLearner()
+        self.thinker = HumanThinker(mimo_api_key, mimo_api_base, mimo_model)
     
     def analyze(self, segments: list[dict], source_lang: str, target_lang: str) -> dict:
         """
@@ -81,6 +83,31 @@ class AGIBrain:
         
         return segments
     
+
+    def think(self, question: str, context: dict = None) -> dict:
+        """Chain-of-thought reasoning on any question."""
+        return self.thinker.think(question, context)
+    
+    def think_translation(self, text: str, source_lang: str, target_lang: str, context: dict = None) -> dict:
+        """Deep thinking about how to translate a line."""
+        return self.thinker.think_translation(text, source_lang, target_lang, context)
+    
+    def think_emotion(self, text: str, context: dict = None) -> dict:
+        """Deep emotion analysis with acting direction."""
+        return self.thinker.think_emotion(text, context)
+    
+    def think_cultural_bridge(self, text: str, source_lang: str, target_lang: str) -> dict:
+        """Think about cultural gaps and how to bridge them."""
+        return self.thinker.think_cultural_bridge(text, source_lang, target_lang)
+    
+    def brainstorm(self, text: str, source_lang: str, target_lang: str, n: int = 3) -> list[str]:
+        """Brainstorm multiple translation options."""
+        return self.thinker.brainstorm_translations(text, source_lang, target_lang, n)
+    
+    def self_reflect(self, translation: str, original: str, context: dict = None) -> dict:
+        """Self-reflect on a translation quality."""
+        return self.thinker.self_reflect(translation, original, context)
+
     def assess_and_retry(self, segments: list[dict], output_dir: str, context: dict) -> dict:
         """
         After pipeline: assess quality, suggest retries if needed.

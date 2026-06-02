@@ -42,6 +42,7 @@ import requests
 # AGI Brain
 try:
     from brain import AGIBrain
+    from brain.human_thinker import HumanThinker
     HAS_BRAIN = True
 except ImportError:
     HAS_BRAIN = False

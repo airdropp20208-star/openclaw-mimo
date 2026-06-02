@@ -72,6 +72,9 @@ KO_EMOTION_KEYWORDS = {
 }
 
 
+from .human_thinker import HumanThinker
+
+
 class EmotionDetector:
     """Multi-modal emotion detection."""
     
@@ -82,27 +85,31 @@ class EmotionDetector:
     
     def detect_from_text(self, text: str, context: dict = None, lang: str = "auto") -> str:
         """
-        Detect emotion from text using keyword matching + LLM if available.
+        Detect emotion from text using keyword matching + LLM + HumanThinker.
         Returns emotion label.
         """
-        # Step 1: Keyword-based detection
+        # Step 1: Keyword-based detection (fast)
         keyword_emotion = self._detect_keywords(text, lang)
         
-        # Step 2: If we have LLM and it's ambiguous, use deeper analysis
-        if self.api_key and keyword_emotion in ("neutral", ""):
-            llm_emotion = self._detect_llm(text, context)
-            return llm_emotion
+        # Step 2: If we have LLM, use HumanThinker for deep analysis
+        if self.api_key:
+            if keyword_emotion in ("neutral", ""):
+                # Ambiguous — use deep thinking
+                thinker = HumanThinker(self.api_key, self.api_base, self.model)
+                thinking = thinker.think_emotion(text, context)
+                return thinking.get("surface_emotion", keyword_emotion or "neutral")
+            elif keyword_emotion and keyword_emotion != "neutral":
+                # Cross-check with context
+                if context:
+                    genre = context.get("genre", "")
+                    if genre == "news" and keyword_emotion in ("excited", "fearful"):
+                        return "serious"
+                    elif genre == "comedy" and keyword_emotion == "angry":
+                        return "excited"
+                return keyword_emotion
         
-        # Step 3: If keyword detection found something with high confidence
+        # Step 3: LLM unavailable, use keyword result
         if keyword_emotion and keyword_emotion != "neutral":
-            # Cross-check with context
-            if context:
-                genre = context.get("genre", "")
-                if genre == "news" and keyword_emotion in ("excited", "fearful"):
-                    return "serious"  # News tends to be serious
-                elif genre == "comedy" and keyword_emotion == "angry":
-                    return "excited"  # Comedy anger is usually light
-            
             return keyword_emotion
         
         return keyword_emotion or "neutral"

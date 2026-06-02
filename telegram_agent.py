@@ -140,7 +140,7 @@ except ImportError:
    133|        "/dub `<url>` — Vietsub video từ URL\n"
    134|        "/settings — Xem/sửa cài đặt\n"
    135|        "/status — Xem trạng thái jobs\n"
-   136|        "/analyze <url> — 🧠 Phân tích video\n        /brain — 🧠 Xem stats brain\n        /help — Hướng dẫn sử dụng\n\n"
+   136|        "/analyze <url> — 🧠 Phân tích video\n        /think <text> — 🧠 Suy nghi ve dich\n        /brain — 🧠 Xem stats brain\n        /help — Hướng dẫn sử dụng\n\n"
    137|        "**Cài đặt hiện tại:**\n"
    138|        f"• Ngôn ngữ: {DEFAULT_SOURCE_LANG} → {DEFAULT_TARGET_LANG}\n"
    139|        f"• TTS: {DEFAULT_TTS_ENGINE}\n"
@@ -551,6 +551,7 @@ except ImportError:
    544|    app.add_handler(CommandHandler("dub", cmd_dub))
    545|    app.add_handler(CommandHandler("settings", cmd_settings))
    546|    app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("think", cmd_think))
     app.add_handler(CommandHandler("analyze", cmd_analyze))
     app.add_handler(CommandHandler("brain", cmd_brain))\n    app.add_handler(CommandHandler("tts", cmd_tts))
    547|    
